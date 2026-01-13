@@ -35,13 +35,25 @@ export class BotEngineService {
     await this.conversations.addMessage(dto.userId, dto.companyId, 'user', dto.message);
 
     // 3. LÓGICA CONTEXTUAL: Si estamos en modo "collecting" con intención "reservar"
-    // debemos forzar la continuidad de la reserva
+    // debemos forzar la continuidad de la reserva, PERO solo si el mensaje no es un saludo
     const isContinuingReservation = 
       context.stage === 'collecting' && context.lastIntention === 'reservar';
+    
+    // Detectar primero si es un saludo (tiene máxima prioridad y resetea el contexto)
+    const greetingKeywords = ['hola', 'buenos días', 'buenas tardes', 'buenas noches', 'hey', 'hi'];
+    const isGreeting = greetingKeywords.some(keyword => 
+      dto.message.toLowerCase().includes(keyword.toLowerCase())
+    );
 
     let detection: DetectionResult;
 
-    if (isContinuingReservation) {
+    if (isGreeting) {
+      // Si es un saludo, SIEMPRE detectar como "saludar" y resetear contexto
+      detection = {
+        intention: 'saludar',
+        confidence: 1.0,
+      };
+    } else if (isContinuingReservation) {
       // Si estamos continuando una reserva, SIEMPRE usar OpenAI para extraer datos
       // OpenAI entiende mejor el contexto y puede extraer información incluso sin keywords
       detection = await this.layer3.detect(dto.message, dto.companyId, dto.userId);
@@ -76,7 +88,13 @@ export class BotEngineService {
 
     if (detection.intention === 'saludar') {
       reply = '¡Hola! Bienvenido a Restaurante La Pasta. ¿En qué puedo ayudarte? Puedo ayudarte a hacer una reserva.';
-      newState.stage = 'idle';
+      // Resetear contexto completamente cuando es un saludo (inicia nueva conversación)
+      newState = {
+        stage: 'idle',
+        collectedData: {},
+        conversationHistory: context.conversationHistory, // Mantener historial pero resetear estado
+        lastIntention: undefined,
+      };
     } else if (detection.intention === 'reservar') {
       const result = await this.handleReservation(detection, context, dto);
       reply = result.reply;
@@ -154,6 +172,8 @@ export class BotEngineService {
       date: collected.date!,
       time: collected.time!,
       guests: collected.guests,
+      userId: dto.userId, // Pasar userId para validar reservas duplicadas
+      service: collected.service, // Pasar service para validar por servicio
     });
 
     if (!available.isAvailable) {

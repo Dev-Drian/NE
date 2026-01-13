@@ -31,7 +31,17 @@ async function main() {
           saturday: '12:00-23:00',
           sunday: '12:00-22:00',
         },
-        capacity: 50,
+        capacity: 50, // Capacidad total (fallback si no hay servicios)
+        services: {
+          mesa: {
+            capacity: 30,
+            name: 'Mesa en restaurante',
+          },
+          domicilio: {
+            capacity: 20,
+            name: 'Servicio a domicilio',
+          },
+        },
       },
     },
   });

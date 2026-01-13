@@ -6,9 +6,9 @@
 **Headers:** `Content-Type: application/json`
 
 **IDs para usar:**
-- Company ID: `12f242a4-216a-4a1f-8f59-e924b46b8959`
-- User ID 1: `8164b55f-9495-41f4-b2ee-4cb84eeffcdf` (Juan Pérez)
-- User ID 2: `aee44ff7-29dc-4012-9783-8539e59774ab` (María García)
+- Company ID: `ce5f4441-6a73-4d3a-b0bc-70b417107015`
+- User ID 1: `7934ce2f-85b6-4a53-8b44-2f8c483a5665` (Juan Pérez - tel: 612345678)
+- User ID 2: `c76ab13d-a85e-4b8b-ae27-262e4ce56fd5` (María García - tel: 698765432)
 
 ---
 
@@ -17,8 +17,8 @@
 ### Paso 1.1: Usuario saluda
 ```json
 {
-  "companyId": "12f242a4-216a-4a1f-8f59-e924b46b8959",
-  "userId": "8164b55f-9495-41f4-b2ee-4cb84eeffcdf",
+  "companyId": "ce5f4441-6a73-4d3a-b0bc-70b417107015",
+  "userId": "7934ce2f-85b6-4a53-8b44-2f8c483a5665",
   "message": "hola"
 }
 ```
@@ -29,8 +29,8 @@
 ### Paso 1.2: Usuario expresa intención de reservar
 ```json
 {
-  "companyId": "12f242a4-216a-4a1f-8f59-e924b46b8959",
-  "userId": "8164b55f-9495-41f4-b2ee-4cb84eeffcdf",
+  "companyId": "ce5f4441-6a73-4d3a-b0bc-70b417107015",
+  "userId": "7934ce2f-85b6-4a53-8b44-2f8c483a5665",
   "message": "quiero reservar una mesa"
 }
 ```
@@ -41,8 +41,8 @@
 ### Paso 1.3: Usuario proporciona fecha y hora
 ```json
 {
-  "companyId": "12f242a4-216a-4a1f-8f59-e924b46b8959",
-  "userId": "8164b55f-9495-41f4-b2ee-4cb84eeffcdf",
+  "companyId": "ce5f4441-6a73-4d3a-b0bc-70b417107015",
+  "userId": "7934ce2f-85b6-4a53-8b44-2f8c483a5665",
   "message": "para mañana a las 8 de la noche"
 }
 ```
@@ -53,8 +53,8 @@
 ### Paso 1.4: Usuario proporciona número de comensales
 ```json
 {
-  "companyId": "12f242a4-216a-4a1f-8f59-e924b46b8959",
-  "userId": "8164b55f-9495-41f4-b2ee-4cb84eeffcdf",
+  "companyId": "ce5f4441-6a73-4d3a-b0bc-70b417107015",
+  "userId": "7934ce2f-85b6-4a53-8b44-2f8c483a5665",
   "message": "somos 4 personas"
 }
 ```
@@ -65,8 +65,8 @@
 ### Paso 1.5: Usuario proporciona teléfono
 ```json
 {
-  "companyId": "12f242a4-216a-4a1f-8f59-e924b46b8959",
-  "userId": "8164b55f-9495-41f4-b2ee-4cb84eeffcdf",
+  "companyId": "ce5f4441-6a73-4d3a-b0bc-70b417107015",
+  "userId": "7934ce2f-85b6-4a53-8b44-2f8c483a5665",
   "message": "mi teléfono es 612345678"
 }
 ```
@@ -79,8 +79,8 @@
 ### Test 2.1: Reserva con todos los datos
 ```json
 {
-  "companyId": "12f242a4-216a-4a1f-8f59-e924b46b8959",
-  "userId": "aee44ff7-29dc-4012-9783-8539e59774ab",
+  "companyId": "ce5f4441-6a73-4d3a-b0bc-70b417107015",
+  "userId": "c76ab13d-a85e-4b8b-ae27-262e4ce56fd5",
   "message": "quiero reservar una mesa para el viernes a las 20:00 para 2 personas, mi teléfono es 698765432"
 }
 ```
@@ -91,8 +91,8 @@
 ### Test 2.2: Reserva con formato natural
 ```json
 {
-  "companyId": "12f242a4-216a-4a1f-8f59-e924b46b8959",
-  "userId": "aee44ff7-29dc-4012-9783-8539e59774ab",
+  "companyId": "ce5f4441-6a73-4d3a-b0bc-70b417107015",
+  "userId": "c76ab13d-a85e-4b8b-ae27-262e4ce56fd5",
   "message": "necesito una mesa para mañana sábado a las 9pm para 3 personas, contacto 611223344"
 }
 ```
@@ -105,8 +105,8 @@
 ### Test 3.1: Consultar horarios
 ```json
 {
-  "companyId": "12f242a4-216a-4a1f-8f59-e924b46b8959",
-  "userId": "8164b55f-9495-41f4-b2ee-4cb84eeffcdf",
+  "companyId": "ce5f4441-6a73-4d3a-b0bc-70b417107015",
+  "userId": "7934ce2f-85b6-4a53-8b44-2f8c483a5665",
   "message": "qué horarios tienen?"
 }
 ```
@@ -117,8 +117,8 @@
 ### Test 3.2: Consultar disponibilidad
 ```json
 {
-  "companyId": "12f242a4-216a-4a1f-8f59-e924b46b8959",
-  "userId": "8164b55f-9495-41f4-b2ee-4cb84eeffcdf",
+  "companyId": "ce5f4441-6a73-4d3a-b0bc-70b417107015",
+  "userId": "7934ce2f-85b6-4a53-8b44-2f8c483a5665",
   "message": "hay disponibilidad para el domingo?"
 }
 ```
@@ -131,8 +131,8 @@
 ### Test 4.1: Cancelar reserva
 ```json
 {
-  "companyId": "12f242a4-216a-4a1f-8f59-e924b46b8959",
-  "userId": "8164b55f-9495-41f4-b2ee-4cb84eeffcdf",
+  "companyId": "ce5f4441-6a73-4d3a-b0bc-70b417107015",
+  "userId": "7934ce2f-85b6-4a53-8b44-2f8c483a5665",
   "message": "quiero cancelar mi reserva"
 }
 ```
@@ -145,8 +145,8 @@
 ### Test 5.1: Capa 1 - Keywords (debe ser muy rápido)
 ```json
 {
-  "companyId": "12f242a4-216a-4a1f-8f59-e924b46b8959",
-  "userId": "8164b55f-9495-41f4-b2ee-4cb84eeffcdf",
+  "companyId": "ce5f4441-6a73-4d3a-b0bc-70b417107015",
+  "userId": "7934ce2f-85b6-4a53-8b44-2f8c483a5665",
   "message": "reservar mesa"
 }
 ```
@@ -157,8 +157,8 @@
 ### Test 5.2: Capa 2 - Similarity (texto similar a ejemplos)
 ```json
 {
-  "companyId": "12f242a4-216a-4a1f-8f59-e924b46b8959",
-  "userId": "8164b55f-9495-41f4-b2ee-4cb84eeffcdf",
+  "companyId": "ce5f4441-6a73-4d3a-b0bc-70b417107015",
+  "userId": "7934ce2f-85b6-4a53-8b44-2f8c483a5665",
   "message": "busco mesa para el sábado"
 }
 ```
@@ -169,8 +169,8 @@
 ### Test 5.3: Capa 3 - OpenAI (texto ambiguo)
 ```json
 {
-  "companyId": "12f242a4-216a-4a1f-8f59-e924b46b8959",
-  "userId": "8164b55f-9495-41f4-b2ee-4cb84eeffcdf",
+  "companyId": "ce5f4441-6a73-4d3a-b0bc-70b417107015",
+  "userId": "7934ce2f-85b6-4a53-8b44-2f8c483a5665",
   "message": "me gustaría comer este viernes en la noche con mi familia"
 }
 ```
@@ -183,8 +183,8 @@
 ### Test 6.1: Mensaje genérico
 ```json
 {
-  "companyId": "12f242a4-216a-4a1f-8f59-e924b46b8959",
-  "userId": "8164b55f-9495-41f4-b2ee-4cb84eeffcdf",
+  "companyId": "ce5f4441-6a73-4d3a-b0bc-70b417107015",
+  "userId": "7934ce2f-85b6-4a53-8b44-2f8c483a5665",
   "message": "cómo están?"
 }
 ```
@@ -197,8 +197,8 @@
 ### Test 7.1: Usuario 1 - Conversación independiente
 ```json
 {
-  "companyId": "12f242a4-216a-4a1f-8f59-e924b46b8959",
-  "userId": "8164b55f-9495-41f4-b2ee-4cb84eeffcdf",
+  "companyId": "ce5f4441-6a73-4d3a-b0bc-70b417107015",
+  "userId": "7934ce2f-85b6-4a53-8b44-2f8c483a5665",
   "message": "hola, quiero reservar"
 }
 ```
@@ -206,8 +206,8 @@
 ### Test 7.2: Usuario 2 - Conversación independiente (mismo tiempo)
 ```json
 {
-  "companyId": "12f242a4-216a-4a1f-8f59-e924b46b8959",
-  "userId": "aee44ff7-29dc-4012-9783-8539e59774ab",
+  "companyId": "ce5f4441-6a73-4d3a-b0bc-70b417107015",
+  "userId": "c76ab13d-a85e-4b8b-ae27-262e4ce56fd5",
   "message": "buenos días, consultar horarios"
 }
 ```
@@ -220,8 +220,8 @@
 ### Test 8.1: Reserva en horario válido
 ```json
 {
-  "companyId": "12f242a4-216a-4a1f-8f59-e924b46b8959",
-  "userId": "8164b55f-9495-41f4-b2ee-4cb84eeffcdf",
+  "companyId": "ce5f4441-6a73-4d3a-b0bc-70b417107015",
+  "userId": "7934ce2f-85b6-4a53-8b44-2f8c483a5665",
   "message": "reservar mesa para mañana a las 14:00 para 2 personas, teléfono 612345678"
 }
 ```
@@ -232,8 +232,8 @@
 ### Test 8.2: Reserva en horario fuera de servicio (debe fallar)
 ```json
 {
-  "companyId": "12f242a4-216a-4a1f-8f59-e924b46b8959",
-  "userId": "8164b55f-9495-41f4-b2ee-4cb84eeffcdf",
+  "companyId": "ce5f4441-6a73-4d3a-b0bc-70b417107015",
+  "userId": "7934ce2f-85b6-4a53-8b44-2f8c483a5665",
   "message": "reservar mesa para mañana a las 23:30 para 2 personas, teléfono 612345678"
 }
 ```
@@ -246,8 +246,8 @@
 ### Test 9.1: Reservar - Variación 1
 ```json
 {
-  "companyId": "12f242a4-216a-4a1f-8f59-e924b46b8959",
-  "userId": "8164b55f-9495-41f4-b2ee-4cb84eeffcdf",
+  "companyId": "ce5f4441-6a73-4d3a-b0bc-70b417107015",
+  "userId": "7934ce2f-85b6-4a53-8b44-2f8c483a5665",
   "message": "necesito una mesa"
 }
 ```
@@ -255,8 +255,8 @@
 ### Test 9.2: Reservar - Variación 2
 ```json
 {
-  "companyId": "12f242a4-216a-4a1f-8f59-e924b46b8959",
-  "userId": "8164b55f-9495-41f4-b2ee-4cb84eeffcdf",
+  "companyId": "ce5f4441-6a73-4d3a-b0bc-70b417107015",
+  "userId": "7934ce2f-85b6-4a53-8b44-2f8c483a5665",
   "message": "quiero hacer una reserva"
 }
 ```
@@ -264,8 +264,8 @@
 ### Test 9.3: Reservar - Variación 3
 ```json
 {
-  "companyId": "12f242a4-216a-4a1f-8f59-e924b46b8959",
-  "userId": "8164b55f-9495-41f4-b2ee-4cb84eeffcdf",
+  "companyId": "ce5f4441-6a73-4d3a-b0bc-70b417107015",
+  "userId": "7934ce2f-85b6-4a53-8b44-2f8c483a5665",
   "message": "tengo una cita para mañana"
 }
 ```
@@ -277,8 +277,8 @@
 ### Test 10.1: Mensaje vacío o muy corto
 ```json
 {
-  "companyId": "12f242a4-216a-4a1f-8f59-e924b46b8959",
-  "userId": "8164b55f-9495-41f4-b2ee-4cb84eeffcdf",
+  "companyId": "ce5f4441-6a73-4d3a-b0bc-70b417107015",
+  "userId": "7934ce2f-85b6-4a53-8b44-2f8c483a5665",
   "message": "si"
 }
 ```
@@ -286,8 +286,8 @@
 ### Test 10.2: Mensaje con muchos datos mezclados
 ```json
 {
-  "companyId": "12f242a4-216a-4a1f-8f59-e924b46b8959",
-  "userId": "8164b55f-9495-41f4-b2ee-4cb84eeffcdf",
+  "companyId": "ce5f4441-6a73-4d3a-b0bc-70b417107015",
+  "userId": "7934ce2f-85b6-4a53-8b44-2f8c483a5665",
   "message": "hola quiero reservar para el 25 de diciembre navidad a las 8pm noche para 5 personas incluyendo niños mi teléfono es 611223344 y mi nombre es Juan"
 }
 ```

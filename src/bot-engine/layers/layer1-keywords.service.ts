@@ -10,8 +10,7 @@ export class Layer1KeywordsService {
     const lowerMessage = message.toLowerCase();
     const intentions = await this.intentionsService.findByCompany(companyId);
 
-    let bestMatch: DetectionResult | null = null;
-    let bestConfidence = 0;
+    const detectedIntentions: Array<{ intention: string; confidence: number; priority: number }> = [];
 
     for (const intention of intentions) {
       let totalWeight = 0;
@@ -20,7 +19,10 @@ export class Layer1KeywordsService {
       for (const pattern of intention.patterns) {
         if (pattern.type === 'keyword') {
           const keyword = pattern.value.toLowerCase();
-          if (lowerMessage.includes(keyword)) {
+          // Usar word boundary para evitar matches parciales (ej: "reserva" dentro de "cancelar mi reserva")
+          // Pero también permitir matches simples para flexibilidad
+          const keywordRegex = new RegExp(`\\b${keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+          if (keywordRegex.test(lowerMessage)) {
             totalWeight += pattern.weight;
             matchesCount++;
           }
@@ -33,18 +35,52 @@ export class Layer1KeywordsService {
         const bonus = Math.min(matchesCount * 0.1, 0.2); // Bonus máximo de 0.2
         const confidence = Math.min(avgWeight + bonus, 1.0);
 
-        if (confidence > bestConfidence) {
-          bestConfidence = confidence;
-          bestMatch = {
-            intention: intention.name,
-            confidence,
+        detectedIntentions.push({
+          intention: intention.name,
+          confidence,
+          priority: intention.priority,
+        });
+      }
+    }
+
+    if (detectedIntentions.length === 0) {
+      return {
+        intention: 'otro',
+        confidence: 0,
+      };
+    }
+
+    // Ordenar por prioridad (mayor primero), luego por confidence
+    detectedIntentions.sort((a, b) => {
+      if (a.priority !== b.priority) {
+        return b.priority - a.priority; // Mayor prioridad primero
+      }
+      return b.confidence - a.confidence; // Mayor confianza primero
+    });
+
+    const bestMatch = detectedIntentions[0];
+
+    // Si hay múltiples intenciones detectadas, priorizar acciones específicas sobre genéricas
+    if (detectedIntentions.length > 1) {
+      const actionPriority = ['cancelar', 'reservar', 'consultar', 'saludar'];
+      
+      // Buscar la intención con mayor prioridad de acción
+      for (const action of actionPriority) {
+        const actionMatch = detectedIntentions.find(d => d.intention === action);
+        if (actionMatch) {
+          return {
+            intention: actionMatch.intention,
+            confidence: actionMatch.confidence,
           };
         }
       }
     }
 
-    if (bestMatch && bestConfidence >= 0.5) {
-      return bestMatch;
+    if (bestMatch.confidence >= 0.5) {
+      return {
+        intention: bestMatch.intention,
+        confidence: bestMatch.confidence,
+      };
     }
 
     return {
