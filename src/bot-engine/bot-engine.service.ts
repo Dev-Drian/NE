@@ -5,6 +5,8 @@ import { Layer3OpenAIService } from './layers/layer3-openai.service';
 import { ConversationsService } from '../conversations/conversations.service';
 import { ReservationsService } from '../reservations/reservations.service';
 import { AvailabilityService } from '../availability/availability.service';
+import { MessagesTemplatesService } from '../messages-templates/messages-templates.service';
+import { CompaniesService } from '../companies/companies.service';
 import { ProcessMessageDto } from './dto/process-message.dto';
 import { DetectionResult } from './dto/detection-result.dto';
 
@@ -25,6 +27,8 @@ export class BotEngineService {
     private conversations: ConversationsService,
     private reservations: ReservationsService,
     private availability: AvailabilityService,
+    private messagesTemplates: MessagesTemplatesService,
+    private companies: CompaniesService,
   ) {}
 
   async processMessage(dto: ProcessMessageDto): Promise<ProcessMessageResponse> {
@@ -82,12 +86,18 @@ export class BotEngineService {
       }
     }
 
-    // 6. Procesar según intención
+    // 6. Obtener información de la empresa
+    const company = await this.companies.findOne(dto.companyId);
+    if (!company) {
+      throw new Error('Empresa no encontrada');
+    }
+
+    // 7. Procesar según intención
     let reply: string;
     let newState = { ...context };
 
     if (detection.intention === 'saludar') {
-      reply = '¡Hola! Bienvenido a Restaurante La Pasta. ¿En qué puedo ayudarte? Puedo ayudarte a hacer una reserva.';
+      reply = await this.messagesTemplates.getGreeting(company.type, company.name);
       // Resetear contexto completamente cuando es un saludo (inicia nueva conversación)
       newState = {
         stage: 'idle',
@@ -96,27 +106,29 @@ export class BotEngineService {
         lastIntention: undefined,
       };
     } else if (detection.intention === 'reservar') {
-      const result = await this.handleReservation(detection, context, dto);
+      const result = await this.handleReservation(detection, context, dto, company.type);
       reply = result.reply;
       newState = result.newState;
     } else if (detection.intention === 'cancelar') {
-      reply = detection.suggestedReply || 'Para cancelar tu reserva, necesito más información.';
+      reply = detection.suggestedReply || await this.messagesTemplates.getReservationCancel(company.type);
       newState.stage = 'idle';
     } else if (detection.intention === 'consultar') {
-      reply = detection.suggestedReply || 'Nuestro horario es de 12:00 a 22:00 de lunes a domingo (viernes y sábados hasta las 23:00). ¿Te gustaría hacer una reserva?';
+      const config = company.config as any;
+      const hoursText = this.formatHours(config?.hours);
+      reply = detection.suggestedReply || await this.messagesTemplates.getReservationQuery(company.type, hoursText);
       newState.stage = 'idle';
     } else {
-      reply = detection.suggestedReply || 'No entendí. ¿Puedes reformular? Puedo ayudarte con reservas, información de horarios o cancelaciones.';
+      reply = detection.suggestedReply || await this.messagesTemplates.getError(company.type);
       newState.stage = 'idle';
     }
 
-    // 7. Guardar estado actualizado
+    // 8. Guardar estado actualizado
     await this.conversations.saveContext(dto.userId, dto.companyId, newState);
 
-    // 8. Agregar respuesta al historial
+    // 9. Agregar respuesta al historial
     await this.conversations.addMessage(dto.userId, dto.companyId, 'assistant', reply);
 
-    // 9. Retornar respuesta
+    // 10. Retornar respuesta
     return {
       reply,
       intention: detection.intention,
@@ -130,7 +142,11 @@ export class BotEngineService {
     detection: DetectionResult,
     context: any,
     dto: ProcessMessageDto,
+    companyType: string,
   ): Promise<{ reply: string; newState: any }> {
+    const settings = await this.messagesTemplates.getReservationSettings(companyType);
+    const missingFieldsLabels = await this.messagesTemplates.getMissingFieldsLabels(companyType);
+
     // Actualizar datos recopilados - solo sobrescribir con valores que NO sean null/undefined
     const extracted = detection.extractedData || {};
     const collected = {
@@ -140,21 +156,17 @@ export class BotEngineService {
       ),
     };
 
-    // Determinar qué falta
-    const required = ['date', 'time', 'guests', 'phone'];
+    // Determinar qué falta - guests es opcional según el tipo
+    const required = ['date', 'time', 'phone'];
+    if (settings.requireGuests) {
+      required.push('guests');
+    }
     const missing = required.filter((f) => !collected[f]);
 
     if (missing.length > 0) {
       // Faltan datos → preguntar
-      const missingFieldsMap: { [key: string]: string } = {
-        date: 'fecha',
-        time: 'hora',
-        guests: 'número de comensales',
-        phone: 'teléfono',
-      };
-
-      const missingFieldsSpanish = missing.map((f) => missingFieldsMap[f] || f);
-      const reply = `Para continuar necesito: ${missingFieldsSpanish.join(', ')}`;
+      const missingFieldsSpanish = missing.map((f) => missingFieldsLabels[f] || f);
+      const reply = await this.messagesTemplates.getReservationRequest(companyType, missingFieldsSpanish);
 
       return {
         reply,
@@ -165,6 +177,11 @@ export class BotEngineService {
           lastIntention: 'reservar',
         },
       };
+    }
+
+    // Si no requiere guests pero no se proporcionó, usar default
+    if (!settings.requireGuests && !collected.guests) {
+      collected.guests = settings.defaultGuests || 1;
     }
 
     // Todos los datos completos → validar disponibilidad
@@ -199,15 +216,22 @@ export class BotEngineService {
         userId: dto.userId,
         date: collected.date!,
         time: collected.time!,
-        guests: collected.guests || 1,
+        guests: collected.guests || settings.defaultGuests || 1,
         phone: collected.phone,
         name: collected.name,
         service: collected.service,
         status: 'confirmed',
       });
 
+      const reply = await this.messagesTemplates.getReservationConfirm(companyType, {
+        date: collected.date!,
+        time: collected.time!,
+        guests: collected.guests,
+        phone: collected.phone,
+      });
+
       return {
-        reply: `✅ Reserva confirmada para ${collected.date} a las ${collected.time} para ${collected.guests || 1} ${collected.guests === 1 ? 'persona' : 'personas'}. Te contactaremos al ${collected.phone || 'número proporcionado'}.`,
+        reply,
         newState: {
           stage: 'completed',
           collectedData: {},
@@ -217,7 +241,7 @@ export class BotEngineService {
     } catch (error) {
       console.error('Error creando reserva:', error);
       return {
-        reply: 'Hubo un error al crear la reserva. Por favor intenta de nuevo.',
+        reply: await this.messagesTemplates.getError(companyType),
         newState: {
           ...context,
           collectedData: collected,
@@ -225,6 +249,12 @@ export class BotEngineService {
         },
       };
     }
+  }
+
+  private formatHours(hours: Record<string, string>): string {
+    if (!hours) return 'consultar disponibilidad';
+    // Formatear horas para mostrar (implementación básica)
+    return 'consultar disponibilidad';
   }
 }
 

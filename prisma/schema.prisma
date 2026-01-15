@@ -107,3 +107,23 @@ model User {
   @@map("users")
 }
 
+model MessageTemplateConfig {
+  id          String   @id @default(uuid())
+  companyType String   @unique // 'restaurant', 'spa', 'salon', 'clinic'
+  active      Boolean  @default(true)
+  
+  // Templates de mensajes
+  templates   Json     // { greeting, reservationRequest, reservationConfirm, reservationCancel, reservationQuery, missingFields, error }
+  
+  // Terminología específica del tipo
+  terminology Json     // { reservation, person, people, service }
+  
+  // Configuración de reservas
+  reservationSettings Json // { requireGuests, defaultGuests }
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("message_template_configs")
+}
+

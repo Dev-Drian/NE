@@ -12,6 +12,7 @@ async function main() {
   await prisma.intention.deleteMany();
   await prisma.company.deleteMany();
   await prisma.user.deleteMany();
+  await prisma.messageTemplateConfig.deleteMany();
 
   // Crear empresa de ejemplo - Restaurante
   const company = await prisma.company.create({
@@ -47,6 +48,113 @@ async function main() {
   });
 
   console.log(`✅ Empresa creada: ${company.name} (${company.id})`);
+
+  // Crear templates de mensajes por tipo de empresa
+  await prisma.messageTemplateConfig.create({
+    data: {
+      companyType: 'restaurant',
+      active: true,
+      templates: {
+        greeting: '¡Hola! Bienvenido a {{companyName}}. ¿En qué puedo ayudarte? Puedo ayudarte a hacer una reserva.',
+        reservationRequest: 'Para continuar con tu reserva necesito: {{fields}}',
+        reservationConfirm: '✅ Reserva confirmada para el {{date}} a las {{time}} para {{guests}} {{peopleText}}. Te contactaremos al {{phone}}.',
+        reservationCancel: 'Para cancelar tu reserva, necesito más información.',
+        reservationQuery: 'Nuestro horario es de {{hours}}. ¿Te gustaría hacer una reserva?',
+        missingFields: 'Para continuar necesito: {{fields}}',
+        error: 'Hubo un error al procesar tu solicitud. Por favor intenta de nuevo.',
+      },
+      terminology: {
+        reservation: 'reserva',
+        person: 'persona',
+        people: 'personas',
+        service: 'servicio',
+      },
+      reservationSettings: {
+        requireGuests: true,
+        defaultGuests: 1,
+      },
+    },
+  });
+
+  await prisma.messageTemplateConfig.create({
+    data: {
+      companyType: 'clinic',
+      active: true,
+      templates: {
+        greeting: '¡Hola! Bienvenido a {{companyName}}. ¿En qué puedo ayudarte? Puedo ayudarte a agendar una cita.',
+        reservationRequest: 'Para continuar con tu cita necesito: {{fields}}',
+        reservationConfirm: '✅ Cita confirmada para el {{date}} a las {{time}}. Te contactaremos al {{phone}}.',
+        reservationCancel: 'Para cancelar tu cita, necesito más información.',
+        reservationQuery: 'Nuestro horario es de {{hours}}. ¿Te gustaría agendar una cita?',
+        missingFields: 'Para continuar necesito: {{fields}}',
+        error: 'Hubo un error al procesar tu solicitud. Por favor intenta de nuevo.',
+      },
+      terminology: {
+        reservation: 'cita',
+        person: 'paciente',
+        people: 'pacientes',
+        service: 'tratamiento',
+      },
+      reservationSettings: {
+        requireGuests: false,
+        defaultGuests: 1,
+      },
+    },
+  });
+
+  await prisma.messageTemplateConfig.create({
+    data: {
+      companyType: 'salon',
+      active: true,
+      templates: {
+        greeting: '¡Hola! Bienvenido a {{companyName}}. ¿En qué puedo ayudarte? Puedo ayudarte a hacer una reserva.',
+        reservationRequest: 'Para continuar con tu reserva necesito: {{fields}}',
+        reservationConfirm: '✅ Reserva confirmada para el {{date}} a las {{time}} para {{guests}} {{peopleText}}. Te contactaremos al {{phone}}.',
+        reservationCancel: 'Para cancelar tu reserva, necesito más información.',
+        reservationQuery: 'Nuestro horario es de {{hours}}. ¿Te gustaría hacer una reserva?',
+        missingFields: 'Para continuar necesito: {{fields}}',
+        error: 'Hubo un error al procesar tu solicitud. Por favor intenta de nuevo.',
+      },
+      terminology: {
+        reservation: 'reserva',
+        person: 'persona',
+        people: 'personas',
+        service: 'servicio',
+      },
+      reservationSettings: {
+        requireGuests: true,
+        defaultGuests: 1,
+      },
+    },
+  });
+
+  await prisma.messageTemplateConfig.create({
+    data: {
+      companyType: 'spa',
+      active: true,
+      templates: {
+        greeting: '¡Hola! Bienvenido a {{companyName}}. ¿En qué puedo ayudarte? Puedo ayudarte a hacer una reserva.',
+        reservationRequest: 'Para continuar con tu reserva necesito: {{fields}}',
+        reservationConfirm: '✅ Reserva confirmada para el {{date}} a las {{time}} para {{guests}} {{peopleText}}. Te contactaremos al {{phone}}.',
+        reservationCancel: 'Para cancelar tu reserva, necesito más información.',
+        reservationQuery: 'Nuestro horario es de {{hours}}. ¿Te gustaría hacer una reserva?',
+        missingFields: 'Para continuar necesito: {{fields}}',
+        error: 'Hubo un error al procesar tu solicitud. Por favor intenta de nuevo.',
+      },
+      terminology: {
+        reservation: 'reserva',
+        person: 'persona',
+        people: 'personas',
+        service: 'servicio',
+      },
+      reservationSettings: {
+        requireGuests: true,
+        defaultGuests: 1,
+      },
+    },
+  });
+
+  console.log('✅ Templates de mensajes creados para todos los tipos de empresa');
 
   // Crear intención "saludar" (para manejar saludos)
   const saludarIntention = await prisma.intention.create({
