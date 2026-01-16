@@ -62,7 +62,24 @@ export class Layer1KeywordsService {
 
     // Si hay múltiples intenciones detectadas, priorizar acciones específicas sobre genéricas
     if (detectedIntentions.length > 1) {
-      const actionPriority = ['cancelar', 'reservar', 'consultar', 'saludar'];
+      // Verificar si hay palabras específicas de consulta en el mensaje
+      const consultaSpecificWords = ['horario', 'horarios', 'abren', 'cierran', 'atención', 'qué días', 'cuál es el horario', 'cuándo abren'];
+      const hasConsultaSpecific = consultaSpecificWords.some(word => 
+        lowerMessage.includes(word.toLowerCase())
+      );
+      
+      // Si tiene palabras específicas de consulta, priorizar consulta sobre reserva
+      if (hasConsultaSpecific) {
+        const consultaMatch = detectedIntentions.find(d => d.intention === 'consultar');
+        if (consultaMatch && consultaMatch.confidence >= 0.7) {
+          return {
+            intention: consultaMatch.intention,
+            confidence: consultaMatch.confidence,
+          };
+        }
+      }
+      
+      const actionPriority = ['cancelar', 'consultar', 'reservar', 'saludar'];
       
       // Buscar la intención con mayor prioridad de acción
       for (const action of actionPriority) {

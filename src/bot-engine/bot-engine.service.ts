@@ -7,6 +7,7 @@ import { ReservationsService } from '../reservations/reservations.service';
 import { AvailabilityService } from '../availability/availability.service';
 import { MessagesTemplatesService } from '../messages-templates/messages-templates.service';
 import { CompaniesService } from '../companies/companies.service';
+import { UsersService } from '../users/users.service';
 import { ProcessMessageDto } from './dto/process-message.dto';
 import { DetectionResult } from './dto/detection-result.dto';
 
@@ -29,14 +30,27 @@ export class BotEngineService {
     private availability: AvailabilityService,
     private messagesTemplates: MessagesTemplatesService,
     private companies: CompaniesService,
+    private usersService: UsersService,
   ) {}
 
   async processMessage(dto: ProcessMessageDto): Promise<ProcessMessageResponse> {
-    // 1. Cargar contexto desde Redis
-    const context = await this.conversations.getContext(dto.userId, dto.companyId);
+    // 1. Si hay teléfono en los datos extraídos y no coincide con el usuario, actualizar
+    // Esto permite actualizar el teléfono del usuario si se proporciona en el mensaje
+    let userId = dto.userId;
+    if (dto.phone) {
+      // Verificar si el usuario tiene el teléfono correcto
+      const user = await this.usersService.findOne(userId);
+      if (user && user.phone !== dto.phone) {
+        // Actualizar teléfono del usuario si cambió
+        await this.usersService.update(userId, { phone: dto.phone });
+      }
+    }
 
-    // 2. Agregar mensaje del usuario al historial
-    await this.conversations.addMessage(dto.userId, dto.companyId, 'user', dto.message);
+    // 2. Cargar contexto desde Redis
+    const context = await this.conversations.getContext(userId, dto.companyId);
+
+    // 3. Agregar mensaje del usuario al historial
+    await this.conversations.addMessage(userId, dto.companyId, 'user', dto.message);
 
     // 3. LÓGICA CONTEXTUAL: Si estamos en modo "collecting" con intención "reservar"
     // debemos forzar la continuidad de la reserva, PERO solo si el mensaje no es un saludo
@@ -45,31 +59,44 @@ export class BotEngineService {
     
     // Detectar primero si es un saludo (tiene máxima prioridad y resetea el contexto)
     const greetingKeywords = ['hola', 'buenos días', 'buenas tardes', 'buenas noches', 'hey', 'hi'];
+    const lowerMessage = dto.message.toLowerCase();
     const isGreeting = greetingKeywords.some(keyword => 
-      dto.message.toLowerCase().includes(keyword.toLowerCase())
+      lowerMessage.includes(keyword.toLowerCase())
+    );
+    
+    // Detectar si hay palabras de consulta específicas (para evitar falsos positivos)
+    const consultaKeywords = ['horario', 'horarios', 'abren', 'cierran', 'atención', 'qué días', 'cuál es el horario', 'cuándo abren'];
+    const hasConsultaKeywords = consultaKeywords.some(keyword => 
+      lowerMessage.includes(keyword.toLowerCase())
     );
 
     let detection: DetectionResult;
 
-    if (isGreeting) {
-      // Si es un saludo, SIEMPRE detectar como "saludar" y resetear contexto
+    if (isGreeting && !hasConsultaKeywords && !lowerMessage.includes('reservar') && !lowerMessage.includes('reserva') && !lowerMessage.includes('cita')) {
+      // Si es SOLO un saludo sin otras intenciones, detectar como "saludar"
       detection = {
         intention: 'saludar',
         confidence: 1.0,
       };
+    } else if (hasConsultaKeywords && !lowerMessage.includes('reservar') && !lowerMessage.includes('reserva')) {
+      // Si tiene palabras de consulta y NO tiene palabras de reserva, priorizar consulta
+      detection = {
+        intention: 'consultar',
+        confidence: 0.9,
+      };
     } else if (isContinuingReservation) {
       // Si estamos continuando una reserva, SIEMPRE usar OpenAI para extraer datos
       // OpenAI entiende mejor el contexto y puede extraer información incluso sin keywords
-      detection = await this.layer3.detect(dto.message, dto.companyId, dto.userId);
+      detection = await this.layer3.detect(dto.message, dto.companyId, userId);
       // Forzar intención a "reservar" porque sabemos que estamos en medio de una reserva
       detection.intention = 'reservar';
       detection.confidence = Math.max(detection.confidence, 0.7);
     } else {
       // Flujo normal: intentar capas 1, 2, 3
-      // 3. CAPA 1: Intentar detección rápida
+      // 4. CAPA 1: Intentar detección rápida
       detection = await this.layer1.detect(dto.message, dto.companyId);
 
-      // 4. Si no hay confianza suficiente → CAPA 2
+      // 5. Si no hay confianza suficiente → CAPA 2
       if (detection.confidence < 0.85) {
         const layer2Detection = await this.layer2.detect(dto.message, dto.companyId);
         if (layer2Detection.confidence > detection.confidence) {
@@ -77,22 +104,53 @@ export class BotEngineService {
         }
       }
 
-      // 5. Si aún no hay confianza → CAPA 3 (OpenAI)
-      if (detection.confidence < 0.6) {
-        const layer3Detection = await this.layer3.detect(dto.message, dto.companyId, dto.userId);
+      // 6. Si la intención es "reservar" y estamos en collecting, SIEMPRE usar OpenAI para extraer datos
+      // O si la confianza es baja, usar OpenAI
+      if (detection.intention === 'reservar' && context.stage === 'collecting') {
+        // Forzar uso de OpenAI para extraer datos cuando estamos recopilando
+        const layer3Detection = await this.layer3.detect(dto.message, dto.companyId, userId);
+        detection.intention = 'reservar'; // Mantener intención
+        detection.confidence = Math.max(detection.confidence, layer3Detection.confidence);
+        // Usar los datos extraídos de OpenAI
+        if (layer3Detection.extractedData) {
+          detection.extractedData = layer3Detection.extractedData;
+        }
+        if (layer3Detection.missingFields) {
+          detection.missingFields = layer3Detection.missingFields;
+        }
+      } else if (detection.confidence < 0.6) {
+        // Si aún no hay confianza → CAPA 3 (OpenAI)
+        const layer3Detection = await this.layer3.detect(dto.message, dto.companyId, userId);
         if (layer3Detection.confidence > detection.confidence) {
           detection = layer3Detection;
         }
       }
     }
 
-    // 6. Obtener información de la empresa
+    // 7. Si se detectó un teléfono en los datos extraídos, crear/actualizar usuario
+    if (detection.extractedData?.phone && !dto.phone) {
+      const extractedPhone = detection.extractedData.phone;
+      const existingUser = await this.usersService.findByPhone(extractedPhone);
+      if (existingUser) {
+        // Si el usuario existe con ese teléfono, usar ese userId
+        userId = existingUser.id;
+      } else {
+        // Crear nuevo usuario con el teléfono extraído
+        const newUser = await this.usersService.create({
+          phone: extractedPhone,
+          name: detection.extractedData.name || null,
+        });
+        userId = newUser.id;
+      }
+    }
+
+    // 8. Obtener información de la empresa
     const company = await this.companies.findOne(dto.companyId);
     if (!company) {
       throw new Error('Empresa no encontrada');
     }
 
-    // 7. Procesar según intención
+    // 9. Procesar según intención
     let reply: string;
     let newState = { ...context };
 
@@ -106,7 +164,7 @@ export class BotEngineService {
         lastIntention: undefined,
       };
     } else if (detection.intention === 'reservar') {
-      const result = await this.handleReservation(detection, context, dto, company.type);
+      const result = await this.handleReservation(detection, context, { ...dto, userId }, company.type);
       reply = result.reply;
       newState = result.newState;
     } else if (detection.intention === 'cancelar') {
@@ -122,13 +180,13 @@ export class BotEngineService {
       newState.stage = 'idle';
     }
 
-    // 8. Guardar estado actualizado
-    await this.conversations.saveContext(dto.userId, dto.companyId, newState);
+    // 10. Guardar estado actualizado
+    await this.conversations.saveContext(userId, dto.companyId, newState);
 
-    // 9. Agregar respuesta al historial
-    await this.conversations.addMessage(dto.userId, dto.companyId, 'assistant', reply);
+    // 11. Agregar respuesta al historial
+    await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
 
-    // 10. Retornar respuesta
+    // 12. Retornar respuesta
     return {
       reply,
       intention: detection.intention,
@@ -252,9 +310,50 @@ export class BotEngineService {
   }
 
   private formatHours(hours: Record<string, string>): string {
-    if (!hours) return 'consultar disponibilidad';
-    // Formatear horas para mostrar (implementación básica)
-    return 'consultar disponibilidad';
+    if (!hours || Object.keys(hours).length === 0) {
+      return 'consultar disponibilidad';
+    }
+
+    const daysMap: Record<string, string> = {
+      monday: 'Lunes',
+      tuesday: 'Martes',
+      wednesday: 'Miércoles',
+      thursday: 'Jueves',
+      friday: 'Viernes',
+      saturday: 'Sábado',
+      sunday: 'Domingo',
+    };
+
+    const dayOrder = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+    
+    // Agrupar días con mismo horario
+    const hoursBySlot: Record<string, string[]> = {};
+    
+    for (const day of dayOrder) {
+      if (hours[day]) {
+        const timeSlot = hours[day];
+        if (!hoursBySlot[timeSlot]) {
+          hoursBySlot[timeSlot] = [];
+        }
+        hoursBySlot[timeSlot].push(daysMap[day]);
+      }
+    }
+
+    // Formatear horarios agrupados
+    const formattedSlots: string[] = [];
+    for (const [timeSlot, days] of Object.entries(hoursBySlot)) {
+      if (days.length === 1) {
+        formattedSlots.push(`${days[0]}: ${timeSlot}`);
+      } else if (days.length === 2) {
+        formattedSlots.push(`${days[0]} y ${days[1]}: ${timeSlot}`);
+      } else {
+        const firstDay = days[0];
+        const lastDay = days[days.length - 1];
+        formattedSlots.push(`${firstDay} a ${lastDay}: ${timeSlot}`);
+      }
+    }
+
+    return formattedSlots.join('. ');
   }
 }
 

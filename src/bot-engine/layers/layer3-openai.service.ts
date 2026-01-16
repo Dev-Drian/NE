@@ -57,9 +57,12 @@ ${currentStateInfo}
 
 INSTRUCCIONES:
 - Si estamos en proceso de reserva (estado "collecting"), la intención debe ser "reservar"
-- Extrae SOLO los datos que aparecen en el mensaje actual (fecha, hora, número de personas, teléfono, nombre)
-- Para fechas: convierte "mañana" a formato YYYY-MM-DD, "hoy" a fecha actual
-- Para horas: convierte "8 de la noche", "8pm", "20:00" a formato HH:MM (24 horas)
+- Extrae TODOS los datos que aparecen en el mensaje actual (fecha, hora, número de personas, teléfono, nombre)
+- Para fechas: convierte "mañana" a formato YYYY-MM-DD (fecha de mañana), "hoy" a fecha actual (YYYY-MM-DD), "viernes" al próximo viernes (YYYY-MM-DD)
+- Para horas: convierte "8 de la noche" o "8pm" a "20:00", "8 de la mañana" a "08:00", "20:00" se mantiene como "20:00"
+- Para personas: extrae números como "4 personas", "somos 2", "para 3" → guests: 4, 2, 3
+- Para teléfono: extrae números de 9 dígitos como "611223344" → phone: "611223344"
+- IMPORTANTE: Si el mensaje contiene datos, extrae TODOS aunque ya estén en collectedData
 - Si el mensaje no tiene datos nuevos, extractedData puede tener valores null
 
 Responde SOLO con este JSON:

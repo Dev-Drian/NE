@@ -9,6 +9,7 @@ import { ConversationsModule } from '../conversations/conversations.module';
 import { ReservationsModule } from '../reservations/reservations.module';
 import { AvailabilityModule } from '../availability/availability.module';
 import { MessagesTemplatesModule } from '../messages-templates/messages-templates.module';
+import { UsersModule } from '../users/users.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { MessagesTemplatesModule } from '../messages-templates/messages-template
     ReservationsModule,
     AvailabilityModule,
     MessagesTemplatesModule,
+    UsersModule,
   ],
   providers: [
     BotEngineService,

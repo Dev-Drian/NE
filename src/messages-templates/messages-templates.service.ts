@@ -34,7 +34,7 @@ export class MessagesTemplatesService {
   constructor(private prisma: PrismaService) {}
 
   async getConfigByCompanyType(companyType: string): Promise<MessageTemplateConfig | null> {
-    const config = await this.prisma.messageTemplateConfig.findUnique({
+    const config = await this.prisma.messageTemplateConfig.findFirst({
       where: { companyType, active: true },
     });
 
@@ -43,9 +43,9 @@ export class MessagesTemplatesService {
     }
 
     return {
-      templates: (config.templates as Templates) || {},
-      terminology: (config.terminology as Terminology) || this.getDefaultTerminology(),
-      reservationSettings: (config.reservationSettings as ReservationSettings) || this.getDefaultReservationSettings(),
+      templates: (config.templates as unknown as Templates) || {},
+      terminology: (config.terminology as unknown as Terminology) || this.getDefaultTerminology(),
+      reservationSettings: (config.reservationSettings as unknown as ReservationSettings) || this.getDefaultReservationSettings(),
     };
   }
 
@@ -60,7 +60,15 @@ export class MessagesTemplatesService {
   async getReservationRequest(companyType: string, fields: string[]): Promise<string> {
     const config = await this.getConfigByCompanyType(companyType);
     const template = config?.templates.reservationRequest || config?.templates.missingFields || 'Para continuar necesito: {{fields}}';
-    return this.replaceTemplate(template, { fields: fields.join(', ') });
+    const terminology = config?.terminology || this.getDefaultTerminology();
+    
+    // Si solo falta un campo, hacer mensaje más amigable
+    if (fields.length === 1) {
+      return `Perfecto, solo me falta el ${fields[0]}. ¿Podrías proporcionármelo?`;
+    }
+    
+    // Si faltan varios campos, usar el template
+    return this.replaceTemplate(template, { fields: fields.join(', '), reservation: terminology.reservation });
   }
 
   async getReservationConfirm(
