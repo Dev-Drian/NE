@@ -1,0 +1,129 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Company {
+  id          String   @id @default(uuid())
+  name        String
+  type        String   // 'restaurant', 'spa', 'salon', 'clinic'
+  description String?
+  phone       String?
+  active      Boolean  @default(true)
+  
+  // Configuración JSON
+  config      Json     @default("{}")
+  // Ejemplo: { "hours": {"monday": "09:00-18:00"}, "capacity": 10 }
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  intentions   Intention[]
+  reservations Reservation[]
+  
+  @@map("companies")
+}
+
+model Intention {
+  id          String   @id @default(uuid())
+  companyId   String
+  name        String   // 'reservar', 'cancelar', 'consultar'
+  description String?
+  priority    Int      @default(1)
+  active      Boolean  @default(true)
+  
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  patterns    IntentionPattern[]
+  examples    IntentionExample[]
+  
+  @@map("intentions")
+}
+
+model IntentionPattern {
+  id          String   @id @default(uuid())
+  intentionId String
+  type        String   // 'keyword', 'regex'
+  value       String   // palabra o expresión regular
+  weight      Float    @default(0.7)
+  
+  intention   Intention @relation(fields: [intentionId], references: [id], onDelete: Cascade)
+  
+  @@map("intention_patterns")
+}
+
+model IntentionExample {
+  id          String   @id @default(uuid())
+  intentionId String
+  text        String   // "quiero una mesa para 4"
+  
+  intention   Intention @relation(fields: [intentionId], references: [id], onDelete: Cascade)
+  
+  @@map("intention_examples")
+}
+
+model Reservation {
+  id          String   @id @default(uuid())
+  companyId   String
+  userId      String
+  
+  // Datos de la reserva
+  service     String?
+  date        String   // YYYY-MM-DD
+  time        String   // HH:MM
+  guests      Int      @default(1)
+  
+  // Contacto
+  phone       String?
+  email       String?
+  name        String?
+  
+  // Estado
+  status      String   @default("pending") // pending, confirmed, cancelled
+  
+  // Metadata adicional
+  notes       String?
+  metadata    Json     @default("{}")
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  company     Company  @relation(fields: [companyId], references: [id])
+  
+  @@map("reservations")
+}
+
+model User {
+  id          String   @id @default(uuid())
+  phone       String   @unique
+  name        String?
+  email       String?
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now())
+  
+  @@map("users")
+}
+
+model MessageTemplateConfig {
+  id          String   @id @default(uuid())
+  companyType String   @unique // 'restaurant', 'spa', 'salon', 'clinic'
+  active      Boolean  @default(true)
+  
+  // Templates de mensajes
+  templates   Json     // { greeting, reservationRequest, reservationConfirm, reservationCancel, reservationQuery, missingFields, error }
+  
+  // Terminología específica del tipo
+  terminology Json     // { reservation, person, people, service }
+  
+  // Configuración de reservas
+  reservationSettings Json // { requireGuests, defaultGuests }
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("message_template_configs")
+}
+
