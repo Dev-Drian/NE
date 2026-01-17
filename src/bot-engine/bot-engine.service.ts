@@ -104,10 +104,10 @@ export class BotEngineService {
         }
       }
 
-      // 6. Si la intención es "reservar" y estamos en collecting, SIEMPRE usar OpenAI para extraer datos
-      // O si la confianza es baja, usar OpenAI
-      if (detection.intention === 'reservar' && context.stage === 'collecting') {
-        // Forzar uso de OpenAI para extraer datos cuando estamos recopilando
+      // 6. Si la intención es "reservar", SIEMPRE usar OpenAI para extraer datos
+      // Esto es necesario porque Layer1/Layer2 no extraen datos como fecha, hora, etc.
+      if (detection.intention === 'reservar') {
+        // Forzar uso de OpenAI para extraer datos cuando es reserva
         const layer3Detection = await this.layer3.detect(dto.message, dto.companyId, userId);
         detection.intention = 'reservar'; // Mantener intención
         detection.confidence = Math.max(detection.confidence, layer3Detection.confidence);
@@ -205,20 +205,49 @@ export class BotEngineService {
     const settings = await this.messagesTemplates.getReservationSettings(companyType);
     const missingFieldsLabels = await this.messagesTemplates.getMissingFieldsLabels(companyType);
 
-    // Actualizar datos recopilados - solo sobrescribir con valores que NO sean null/undefined
+    // Verificar si la empresa tiene múltiples servicios
+    const company = await this.companies.findOne(dto.companyId);
+    const config = company?.config as any;
+    const hasMultipleServices = config?.services && Object.keys(config.services).length > 1;
+
+    // Actualizar datos recopilados - solo sobrescribir con valores que NO sean null/undefined/vacíos
     const extracted = detection.extractedData || {};
     const collected = {
       ...context.collectedData,
       ...Object.fromEntries(
-        Object.entries(extracted).filter(([_, value]) => value !== null && value !== undefined)
+        Object.entries(extracted).filter(([_, value]) => 
+          value !== null && value !== undefined && value !== '' && value !== 'null'
+        )
       ),
     };
+
+    // Si tiene múltiples servicios Y no se ha seleccionado servicio
+    // Mostrar los servicios disponibles primero (pero GUARDAR los datos ya extraídos)
+    if (hasMultipleServices && !collected.service) {
+      const reply = `Perfecto, te ayudaré a agendar tu cita. Primero, ¿qué servicio necesitas?\n\nServicios disponibles:\n${Object.keys(config.services).map(s => `• ${s}`).join('\n')}`;
+
+      return {
+        reply,
+        newState: {
+          ...context,
+          collectedData: collected, // IMPORTANTE: Guardar TODOS los datos ya extraídos (fecha, hora, etc.)
+          stage: 'collecting',
+          lastIntention: 'reservar',
+        },
+      };
+    }
 
     // Determinar qué falta - guests es opcional según el tipo
     const required = ['date', 'time', 'phone'];
     if (settings.requireGuests) {
       required.push('guests');
     }
+    
+    // Si tiene múltiples servicios, el servicio es obligatorio
+    if (hasMultipleServices) {
+      required.push('service');
+    }
+    
     const missing = required.filter((f) => !collected[f]);
 
     if (missing.length > 0) {

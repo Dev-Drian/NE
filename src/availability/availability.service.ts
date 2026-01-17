@@ -19,6 +19,14 @@ export class AvailabilityService {
     companyId: string, 
     data: { date: string; time: string; guests?: number; userId?: string; service?: string }
   ): Promise<AvailabilityCheck> {
+    // Validar que date y time estén definidos
+    if (!data.date || !data.time) {
+      return {
+        isAvailable: false,
+        message: 'Faltan datos de fecha u hora para verificar disponibilidad',
+      };
+    }
+
     const company = await this.companiesService.findOne(companyId);
     
     if (!company) {
@@ -33,7 +41,9 @@ export class AvailabilityService {
     const capacity = config?.capacity || 10;
 
     // Verificar horario de la empresa
-    const date = new Date(data.date);
+    // Parsear fecha correctamente para evitar problemas de timezone
+    const [year, month, day] = data.date.split('-').map(Number);
+    const date = new Date(year, month - 1, day);
     const dayName = this.getDayName(date.getDay());
     const businessHours = hours[dayName];
 
@@ -44,8 +54,24 @@ export class AvailabilityService {
       };
     }
 
+    // Si el horario es "cerrado" o no tiene formato válido
+    if (businessHours === 'cerrado' || !businessHours.includes('-')) {
+      return {
+        isAvailable: false,
+        message: `No hay servicio el ${dayName}`,
+      };
+    }
+
     const [openTime, closeTime] = businessHours.split('-');
     const requestedTime = data.time;
+
+    // Validar que openTime y closeTime sean válidos
+    if (!openTime || !closeTime) {
+      return {
+        isAvailable: false,
+        message: `Configuración de horario inválida para ${dayName}`,
+      };
+    }
 
     if (!this.isTimeInRange(requestedTime, openTime, closeTime)) {
       return {
@@ -188,6 +214,11 @@ export class AvailabilityService {
   }
 
   private isTimeInRange(time: string, start: string, end: string): boolean {
+    // Validar que todos los parámetros estén definidos
+    if (!time || !start || !end) {
+      console.error('isTimeInRange: parámetros inválidos', { time, start, end });
+      return false;
+    }
     const timeMinutes = this.timeToMinutes(time);
     const startMinutes = this.timeToMinutes(start);
     const endMinutes = this.timeToMinutes(end);
@@ -195,6 +226,10 @@ export class AvailabilityService {
   }
 
   private timeToMinutes(time: string): number {
+    if (!time || typeof time !== 'string') {
+      console.error('timeToMinutes: time inválido', time);
+      return 0;
+    }
     const [hours, minutes] = time.split(':').map(Number);
     return hours * 60 + minutes;
   }

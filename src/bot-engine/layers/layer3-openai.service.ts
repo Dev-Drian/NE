@@ -47,6 +47,60 @@ Datos ya recopilados: ${JSON.stringify(context.collectedData)}
 IMPORTANTE: Si el mensaje contiene datos (fecha, hora, comensales, teléfono), extrae SOLO los nuevos datos.`
       : '';
 
+    // Calcular fechas de referencia para días de la semana
+    const now = new Date();
+    const hoy = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const mañana = new Date(hoy);
+    mañana.setDate(hoy.getDate() + 1);
+    const pasadoMañana = new Date(hoy);
+    pasadoMañana.setDate(hoy.getDate() + 2);
+
+    const formatDate = (date: Date) => {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+
+    // Calcular próximos días de la semana
+    const diasSemana = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+    const proximosDias: { [key: string]: string } = {};
+    
+    for (let i = 0; i < 7; i++) {
+      const dia = diasSemana[i];
+      const hoyDia = hoy.getDay();
+      let diasHasta = i - hoyDia;
+      if (diasHasta <= 0) diasHasta += 7; // Si ya pasó o es hoy, tomar el siguiente
+      
+      const fecha = new Date(hoy);
+      fecha.setDate(hoy.getDate() + diasHasta);
+      proximosDias[dia] = formatDate(fecha);
+    }
+
+    const fechasReferencia = `
+FECHAS DE REFERENCIA (usa estas fechas exactas):
+- Hoy: ${formatDate(hoy)}
+- Mañana: ${formatDate(mañana)}
+- Pasado mañana: ${formatDate(pasadoMañana)}
+- Próximo lunes: ${proximosDias.lunes}
+- Próximo martes: ${proximosDias.martes}
+- Próximo miércoles: ${proximosDias.miércoles}
+- Próximo jueves: ${proximosDias.jueves}
+- Próximo viernes: ${proximosDias.viernes}
+- Próximo sábado: ${proximosDias.sábado}
+- Próximo domingo: ${proximosDias.domingo}
+`;
+
+    // Verificar si la empresa tiene múltiples servicios
+    const config = company.config as any;
+    const hasMultipleServices = config?.services && Object.keys(config.services).length > 1;
+    const servicesInfo = hasMultipleServices 
+      ? `\n\nSERVICIOS DISPONIBLES:
+Esta empresa ofrece múltiples servicios: ${Object.keys(config.services).join(', ')}
+IMPORTANTE: El servicio es OBLIGATORIO. Si el usuario menciona alguno de estos servicios, extráelo en el campo "service".
+Ejemplos: "limpieza dental" → service: "limpieza", "consulta odontológica" → service: "consulta"` 
+      : '';
+
     const prompt = `Analiza este mensaje de un cliente y responde SOLO con un JSON válido (sin markdown, sin código, solo JSON):
 
 Contexto: Cliente de ${company.name} (tipo: ${company.type})
@@ -55,13 +109,16 @@ Mensaje: "${message}"
 ${conversationHistory ? `Conversación previa:\n${conversationHistory}\n` : ''}
 ${currentStateInfo}
 
+${fechasReferencia}
+${servicesInfo}
+
 INSTRUCCIONES:
 - Si estamos en proceso de reserva (estado "collecting"), la intención debe ser "reservar"
-- Extrae TODOS los datos que aparecen en el mensaje actual (fecha, hora, número de personas, teléfono, nombre)
-- Para fechas: convierte "mañana" a formato YYYY-MM-DD (fecha de mañana), "hoy" a fecha actual (YYYY-MM-DD), "viernes" al próximo viernes (YYYY-MM-DD)
-- Para horas: convierte "8 de la noche" o "8pm" a "20:00", "8 de la mañana" a "08:00", "20:00" se mantiene como "20:00"
+- Extrae TODOS los datos que aparecen en el mensaje actual (fecha, hora, número de personas, teléfono, nombre${hasMultipleServices ? ', servicio' : ''})
+- Para fechas: USA LAS FECHAS DE REFERENCIA de arriba. Si dice "viernes" usa la fecha de "Próximo viernes", si dice "mañana" usa la fecha de "Mañana"
+- Para horas: convierte "4 PM" a "16:00", "4 de la tarde" a "16:00", "8 de la noche" o "8pm" a "20:00", "8 de la mañana" a "08:00"
 - Para personas: extrae números como "4 personas", "somos 2", "para 3" → guests: 4, 2, 3
-- Para teléfono: extrae números de 9 dígitos como "611223344" → phone: "611223344"
+- Para teléfono: extrae números de 9 dígitos como "611223344" → phone: "611223344"${hasMultipleServices ? '\n- Para servicio: extrae el nombre del servicio mencionado (limpieza, consulta, ortodoncia, blanqueamiento, etc.)' : ''}
 - IMPORTANTE: Si el mensaje contiene datos, extrae TODOS aunque ya estén en collectedData
 - Si el mensaje no tiene datos nuevos, extractedData puede tener valores null
 
@@ -74,9 +131,9 @@ Responde SOLO con este JSON:
     "time": "HH:MM o null",
     "guests": número o null,
     "phone": "string o null",
-    "name": "string o null"
+    "name": "string o null"${hasMultipleServices ? ',\n    "service": "string o null"' : ''}
   },
-  "missingFields": ["fecha", "hora"] o [],
+  "missingFields": ["fecha", "hora"${hasMultipleServices ? ', "servicio"' : ''}] o [],
   "suggestedReply": "texto breve para responder"
 }`;
 
@@ -102,6 +159,7 @@ Responde SOLO con este JSON:
         guests: 'comensales',
         phone: 'teléfono',
         name: 'nombre',
+        service: 'servicio',
       };
 
       const missingFields = parsed.missingFields || [];
