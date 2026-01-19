@@ -1,3 +1,6 @@
+-- CreateEnum
+CREATE TYPE "PaymentStatus" AS ENUM ('PENDING', 'APPROVED', 'DECLINED', 'VOIDED', 'ERROR');
+
 -- CreateTable
 CREATE TABLE "companies" (
     "id" TEXT NOT NULL,
@@ -7,6 +10,12 @@ CREATE TABLE "companies" (
     "phone" TEXT,
     "active" BOOLEAN NOT NULL DEFAULT true,
     "config" JSONB NOT NULL DEFAULT '{}',
+    "requiresPayment" BOOLEAN NOT NULL DEFAULT false,
+    "paymentPercentage" INTEGER NOT NULL DEFAULT 100,
+    "wompiPublicKey" TEXT,
+    "wompiPrivateKey" TEXT,
+    "wompiEventsSecret" TEXT,
+    "wompiEnabled" BOOLEAN NOT NULL DEFAULT false,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -79,6 +88,40 @@ CREATE TABLE "users" (
 );
 
 -- CreateTable
+CREATE TABLE "conversations" (
+    "id" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "companyId" TEXT NOT NULL,
+    "state" TEXT NOT NULL DEFAULT 'greeting',
+    "context" JSONB NOT NULL DEFAULT '{}',
+    "paymentRequired" BOOLEAN NOT NULL DEFAULT false,
+    "paymentCompleted" BOOLEAN NOT NULL DEFAULT false,
+    "lastMessageAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "conversations_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "payments" (
+    "id" TEXT NOT NULL,
+    "companyId" TEXT NOT NULL,
+    "conversationId" TEXT NOT NULL,
+    "amount" DOUBLE PRECISION NOT NULL,
+    "currency" TEXT NOT NULL DEFAULT 'COP',
+    "status" "PaymentStatus" NOT NULL DEFAULT 'PENDING',
+    "wompiTransactionId" TEXT,
+    "wompiReference" TEXT,
+    "paymentUrl" TEXT,
+    "paidAt" TIMESTAMP(3),
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "payments_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "message_template_configs" (
     "id" TEXT NOT NULL,
     "companyType" TEXT NOT NULL,
@@ -96,6 +139,27 @@ CREATE TABLE "message_template_configs" (
 CREATE UNIQUE INDEX "users_phone_key" ON "users"("phone");
 
 -- CreateIndex
+CREATE INDEX "conversations_userId_idx" ON "conversations"("userId");
+
+-- CreateIndex
+CREATE INDEX "conversations_companyId_idx" ON "conversations"("companyId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "payments_wompiTransactionId_key" ON "payments"("wompiTransactionId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "payments_wompiReference_key" ON "payments"("wompiReference");
+
+-- CreateIndex
+CREATE INDEX "payments_conversationId_idx" ON "payments"("conversationId");
+
+-- CreateIndex
+CREATE INDEX "payments_companyId_idx" ON "payments"("companyId");
+
+-- CreateIndex
+CREATE INDEX "payments_status_idx" ON "payments"("status");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "message_template_configs_companyType_key" ON "message_template_configs"("companyType");
 
 -- AddForeignKey
@@ -109,3 +173,12 @@ ALTER TABLE "intention_examples" ADD CONSTRAINT "intention_examples_intentionId_
 
 -- AddForeignKey
 ALTER TABLE "reservations" ADD CONSTRAINT "reservations_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "companies"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "conversations" ADD CONSTRAINT "conversations_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "payments" ADD CONSTRAINT "payments_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "companies"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "payments" ADD CONSTRAINT "payments_conversationId_fkey" FOREIGN KEY ("conversationId") REFERENCES "conversations"("id") ON DELETE RESTRICT ON UPDATE CASCADE;

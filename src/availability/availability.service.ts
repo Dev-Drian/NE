@@ -30,7 +30,13 @@ export class AvailabilityService {
 
     const config = company.config as any;
     const hours = config?.hours || {};
-    const capacity = config?.capacity || 10;
+    const resources = config?.resources || [];
+    
+    // Calcular capacidad total basada en resources
+    let capacity = config?.capacity || 10; // Fallback al valor antiguo
+    if (resources.length > 0) {
+      capacity = resources.reduce((sum: number, r: any) => sum + (r.capacity || 0), 0);
+    }
 
     // Verificar horario de la empresa
     // IMPORTANTE: Parsear la fecha correctamente para evitar problemas de zona horaria
@@ -94,16 +100,16 @@ export class AvailabilityService {
     }
 
     const requestedGuests = data.guests || 1;
-    const services = config?.services;
+    const serviceTypes = config?.services;
 
     // Si hay servicios configurados y se especificó un servicio, validar por servicio
-    if (services && data.service && services[data.service]) {
+    if (serviceTypes && data.service && serviceTypes[data.service]) {
       return this.checkServiceAvailability(
         data.service,
-        services[data.service],
+        serviceTypes[data.service],
         reservationsOnDate,
         requestedGuests,
-        services,
+        serviceTypes,
         openTime,
         closeTime,
         requestedTime,

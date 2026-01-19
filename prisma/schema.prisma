@@ -19,11 +19,20 @@ model Company {
   config      Json     @default("{}")
   // Ejemplo: { "hours": {"monday": "09:00-18:00"}, "capacity": 10 }
   
+  // Configuración de pagos
+  requiresPayment     Boolean @default(false)
+  paymentPercentage   Int     @default(100) // 50 = 50%, 100 = 100%
+  wompiPublicKey      String?
+  wompiPrivateKey     String?
+  wompiEventsSecret   String?
+  wompiEnabled        Boolean @default(false)
+  
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   
   intentions   Intention[]
   reservations Reservation[]
+  payments     Payment[]
   
   @@map("companies")
 }
@@ -104,7 +113,67 @@ model User {
   metadata    Json     @default("{}")
   createdAt   DateTime @default(now())
   
+  conversations Conversation[]
+  
   @@map("users")
+}
+
+model Conversation {
+  id                String   @id @default(uuid())
+  userId            String
+  companyId         String
+  
+  // Estado de la conversación
+  state             String   @default("greeting") // greeting, collecting, confirming, completed
+  context           Json     @default("{}")
+  
+  // Estado de pagos
+  paymentRequired   Boolean  @default(false)
+  paymentCompleted  Boolean  @default(false)
+  
+  lastMessageAt     DateTime @default(now())
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  user              User     @relation(fields: [userId], references: [id])
+  payments          Payment[]
+  
+  @@index([userId])
+  @@index([companyId])
+  @@map("conversations")
+}
+
+model Payment {
+  id                String   @id @default(uuid())
+  companyId         String
+  company           Company  @relation(fields: [companyId], references: [id])
+  conversationId    String
+  conversation      Conversation @relation(fields: [conversationId], references: [id])
+  
+  amount            Float
+  currency          String   @default("COP")
+  status            PaymentStatus @default(PENDING)
+  
+  wompiTransactionId String?  @unique
+  wompiReference    String?  @unique
+  paymentUrl        String?
+  
+  paidAt            DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([conversationId])
+  @@index([companyId])
+  @@index([status])
+  @@map("payments")
+}
+
+enum PaymentStatus {
+  PENDING
+  APPROVED
+  DECLINED
+  VOIDED
+  ERROR
 }
 
 model MessageTemplateConfig {

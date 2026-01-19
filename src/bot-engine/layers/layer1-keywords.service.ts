@@ -67,7 +67,9 @@ export class Layer1KeywordsService {
         'horario', 'horarios', 'abren', 'cierran', 'atención', 
         'qué días', 'cuál es el horario', 'cuándo abren',
         'hay disponibilidad', 'tienen disponibilidad', 'hay espacio',
-        'tienen mesa', 'hay lugar', 'están abiertos', 'disponibilidad'
+        'tienen mesa', 'hay lugar', 'están abiertos', 'disponibilidad',
+        'cuánto cuesta', 'cuanto cuesta', 'precio de', 'valor de',
+        'costo de', 'cuánto vale', 'cuanto vale', 'qué precio'
       ];
       const hasConsultaSpecific = consultaSpecificWords.some(word => 
         lowerMessage.includes(word.toLowerCase())

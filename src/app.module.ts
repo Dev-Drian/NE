@@ -8,6 +8,7 @@ import { ConversationsModule } from './conversations/conversations.module';
 import { AvailabilityModule } from './availability/availability.module';
 import { BotEngineModule } from './bot-engine/bot-engine.module';
 import { MessagesModule } from './messages/messages.module';
+import { PaymentsModule } from './payments/payments.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { MessagesModule } from './messages/messages.module';
     AvailabilityModule,
     BotEngineModule,
     MessagesModule,
+    PaymentsModule,
   ],
 })
 export class AppModule {}

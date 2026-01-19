@@ -1,11 +1,14 @@
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import Redis from 'ioredis';
 import { ConversationState } from './dto/conversation-state.dto';
+import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class ConversationsService implements OnModuleInit, OnModuleDestroy {
   private redis: Redis;
   private readonly TTL = 86400; // 24 horas en segundos
+
+  constructor(private prisma: PrismaService) {}
 
   onModuleInit() {
     const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
@@ -64,6 +67,39 @@ export class ConversationsService implements OnModuleInit, OnModuleDestroy {
   async clearContext(userId: string, companyId: string): Promise<void> {
     const key = this.getKey(userId, companyId);
     await this.redis.del(key);
+  }
+
+  /**
+   * Crea o encuentra una conversación en la base de datos PostgreSQL
+   * Esto es necesario para poder asociar pagos a la conversación
+   */
+  async findOrCreateConversation(userId: string, companyId: string): Promise<string> {
+    // Buscar conversación existente
+    const existing = await this.prisma.conversation.findFirst({
+      where: {
+        userId,
+        companyId,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    if (existing) {
+      return existing.id;
+    }
+
+    // Crear nueva conversación
+    const newConversation = await this.prisma.conversation.create({
+      data: {
+        userId,
+        companyId,
+        state: 'completed', // Ya completada si llegamos aquí
+        context: {},
+      },
+    });
+
+    return newConversation.id;
   }
 }
 

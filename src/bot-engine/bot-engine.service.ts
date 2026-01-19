@@ -17,6 +17,7 @@ export interface ProcessMessageResponse {
   confidence: number;
   missingFields?: string[];
   conversationState: string;
+  conversationId?: string;
 }
 
 @Injectable()
@@ -71,19 +72,120 @@ export class BotEngineService {
     // Detectar primero si es un saludo (tiene máxima prioridad y resetea el contexto)
     const greetingKeywords = ['hola', 'buenos días', 'buenas tardes', 'buenas noches', 'hey', 'hi'];
     const lowerMessage = dto.message.toLowerCase();
+    
+    // Normalizar caracteres para mejor matching (quitar acentos)
+    const normalizeText = (text: string) => {
+      return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    };
+    const normalizedMessage = normalizeText(lowerMessage);
+    
     const isGreeting = greetingKeywords.some(keyword => 
-      lowerMessage.includes(keyword.toLowerCase())
+      normalizedMessage.includes(normalizeText(keyword))
     );
     
-    // Detectar si hay palabras de consulta específicas (para evitar falsos positivos)
-    const consultaKeywords = ['horario', 'horarios', 'abren', 'cierran', 'atención', 'qué días', 'cuál es el horario', 'cuándo abren', 'servicios', 'tratamientos', 'qué servicios', 'cuáles son', 'que ofrecen'];
-    const hasConsultaKeywords = consultaKeywords.some(keyword => 
-      lowerMessage.includes(keyword.toLowerCase())
+    // Detectar si pregunta por productos/menú/servicios (PRIORIDAD ALTA)
+    const productKeywords = ['menu', 'productos', 'que tienen', 'opciones', 'carta', 'que hay', 'que venden', 'que ofrecen'];
+    const asksForProducts = productKeywords.some(keyword => 
+      normalizedMessage.includes(keyword)
     );
+    
+    // Detectar si hay palabras de consulta específicas de horarios/info general (EXCLUIR consultas de productos)
+    const consultaKeywords = ['horario', 'horarios', 'abren', 'cierran', 'atencion', 'que dias', 'cual es el horario', 'cuando abren', 'direccion', 'ubicacion', 'donde estan'];
+    const hasConsultaKeywords = consultaKeywords.some(keyword => 
+      normalizedMessage.includes(keyword)
+    ) && !asksForProducts; // NO activar si pregunta por productos
+
+    // Si pregunta por precio específico de un producto
+    const priceQuestions = ['cuanto cuesta', 'precio de', 'precio del', 'cuanto vale', 'costo de', 'costo del'];
+    const asksForPrice = priceQuestions.some(keyword => normalizedMessage.includes(keyword));
+    
+    if (asksForPrice && !isContinuingReservation) {
+      const config = company.config as any;
+      const products = config?.products || [];
+      
+      // Buscar el producto mencionado
+      const foundProduct = products.find((p: any) => 
+        lowerMessage.includes(p.name.toLowerCase())
+      );
+      
+      if (foundProduct) {
+        const price = new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0 }).format(foundProduct.price);
+        let reply = `💰 **${foundProduct.name}**\n\nPrecio: ${price}`;
+        
+        if (foundProduct.duration) {
+          reply += `\nDuración: ${foundProduct.duration} minutos`;
+        }
+        if (foundProduct.description) {
+          reply += `\n\n${foundProduct.description}`;
+        }
+        
+        // Sugerir productos relacionados de la misma categoría
+        const relatedProducts = products
+          .filter((p: any) => p.category === foundProduct.category && p.id !== foundProduct.id)
+          .slice(0, 2);
+        
+        if (relatedProducts.length > 0) {
+          reply += `\n\n**También tenemos:**`;
+          relatedProducts.forEach((p: any) => {
+            const relPrice = new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0 }).format(p.price);
+            reply += `\n• ${p.name} - ${relPrice}`;
+          });
+        }
+        
+        reply += `\n\n¿Te gustaría hacer una reserva? 😊`;
+        
+        await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
+        return {
+          reply,
+          intention: 'consultar',
+          confidence: 1.0,
+          conversationState: context.stage,
+        };
+      }
+    }
+    
+    // Si pregunta por productos y NO está en proceso de reserva, mostrar lista
+    if (asksForProducts && !isContinuingReservation) {
+      const config = company.config as any;
+      const products = config?.products || [];
+      
+      if (products.length > 0) {
+        let reply = `📋 **${company.type === 'restaurant' ? 'Nuestro Menú' : 'Nuestros Servicios'}:**\n\n`;
+        
+        // Agrupar por categoría
+        const grouped: any = {};
+        products.forEach((p: any) => {
+          if (!grouped[p.category]) grouped[p.category] = [];
+          grouped[p.category].push(p);
+        });
+        
+        for (const [category, items] of Object.entries(grouped)) {
+          reply += `**${category.charAt(0).toUpperCase() + category.slice(1)}**\n`;
+          (items as any[]).forEach((item: any) => {
+            const price = new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0 }).format(item.price);
+            reply += `• ${item.name} - ${price}`;
+            if (item.duration) reply += ` (${item.duration} min)`;
+            if (item.description) reply += ` - ${item.description}`;
+            reply += `\n`;
+          });
+          reply += `\n`;
+        }
+        
+        reply += `¿Te gustaría hacer una reserva? 😊`;
+        
+        await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
+        return {
+          reply,
+          intention: 'consultar',
+          confidence: 1.0,
+          conversationState: context.stage,
+        };
+      }
+    }
 
     let detection: DetectionResult;
 
-    if (isGreeting && !hasConsultaKeywords && !lowerMessage.includes('reservar') && !lowerMessage.includes('reserva') && !lowerMessage.includes('cita')) {
+    if (isGreeting && !hasConsultaKeywords && !asksForProducts && !lowerMessage.includes('reservar') && !lowerMessage.includes('reserva') && !lowerMessage.includes('cita')) {
       // Si es SOLO un saludo sin otras intenciones, detectar como "saludar"
       detection = {
         intention: 'saludar',
@@ -222,13 +324,20 @@ export class BotEngineService {
     // 11. Agregar respuesta al historial
     await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
 
-    // 12. Retornar respuesta
+    // 12. Si la reserva se completó, crear/buscar conversación en BD para pagos
+    let conversationId = `${userId}_${dto.companyId}`;
+    if (newState.stage === 'completed' && detection.intention === 'reservar') {
+      conversationId = await this.conversations.findOrCreateConversation(userId, dto.companyId);
+    }
+
+    // 13. Retornar respuesta
     return {
       reply,
       intention: detection.intention,
       confidence: detection.confidence,
       missingFields: detection.missingFields,
       conversationState: newState.stage,
+      conversationId,
     };
   }
 

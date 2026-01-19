@@ -22,6 +22,13 @@ async function main() {
       description: 'Restaurante italiano especializado en pasta y pizza',
       phone: '+34 912 345 678',
       active: true,
+      // Configuración de Wompi TEST
+      requiresPayment: true,
+      paymentPercentage: 50, // 50% de anticipo
+      wompiPublicKey: 'pub_test_AnjRyoWHPu9UW2X3AsXdz5tWyRAljVfU',
+      wompiPrivateKey: 'prv_test_TC7QYes8DCVl9VgjYYcIXcpIZk91jsfi',
+      wompiEventsSecret: 'test_events_FkA3jAe6sj8cMMu0mjrJCPxROKYOlT4k',
+      wompiEnabled: true,
       config: {
         hours: {
           monday: '12:00-22:00',
@@ -32,15 +39,64 @@ async function main() {
           saturday: '12:00-23:00',
           sunday: '12:00-22:00',
         },
-        capacity: 50, // Capacidad total (fallback si no hay servicios)
+        
+        // Recursos físicos (mesas, salas, etc.)
+        resources: [
+          { id: 'mesa-1', name: 'Mesa para 2', capacity: 2, type: 'mesa', available: true },
+          { id: 'mesa-2', name: 'Mesa para 2', capacity: 2, type: 'mesa', available: true },
+          { id: 'mesa-3', name: 'Mesa para 2', capacity: 2, type: 'mesa', available: true },
+          { id: 'mesa-4', name: 'Mesa para 4', capacity: 4, type: 'mesa', available: true },
+          { id: 'mesa-5', name: 'Mesa para 4', capacity: 4, type: 'mesa', available: true },
+          { id: 'mesa-6', name: 'Mesa para 4', capacity: 4, type: 'mesa', available: true },
+          { id: 'mesa-7', name: 'Mesa para 4', capacity: 4, type: 'mesa', available: true },
+          { id: 'mesa-8', name: 'Mesa para 6', capacity: 6, type: 'mesa', available: true },
+          { id: 'mesa-9', name: 'Mesa para 6', capacity: 6, type: 'mesa', available: true },
+          { id: 'mesa-10', name: 'Mesa para 8', capacity: 8, type: 'mesa', available: true },
+        ],
+        
+        // Productos/Menú (para domicilio o consumo)
+        products: [
+          // Pizzas
+          { id: 'prod-1', name: 'Pizza Margherita', price: 25000, category: 'pizzas', available: true },
+          { id: 'prod-2', name: 'Pizza Pepperoni', price: 28000, category: 'pizzas', available: true },
+          { id: 'prod-3', name: 'Pizza Cuatro Quesos', price: 30000, category: 'pizzas', available: true },
+          { id: 'prod-4', name: 'Pizza Vegetariana', price: 27000, category: 'pizzas', available: true },
+          
+          // Pastas
+          { id: 'prod-5', name: 'Pasta Carbonara', price: 22000, category: 'pastas', available: true },
+          { id: 'prod-6', name: 'Pasta Bolognesa', price: 20000, category: 'pastas', available: true },
+          { id: 'prod-7', name: 'Pasta Alfredo', price: 24000, category: 'pastas', available: true },
+          { id: 'prod-8', name: 'Lasagna', price: 26000, category: 'pastas', available: true },
+          
+          // Bebidas
+          { id: 'prod-9', name: 'Coca Cola', price: 3000, category: 'bebidas', available: true },
+          { id: 'prod-10', name: 'Agua', price: 2000, category: 'bebidas', available: true },
+          { id: 'prod-11', name: 'Vino Tinto', price: 45000, category: 'bebidas', available: true },
+          
+          // Postres
+          { id: 'prod-12', name: 'Tiramisu', price: 12000, category: 'postres', available: true },
+          { id: 'prod-13', name: 'Panna Cotta', price: 10000, category: 'postres', available: true },
+        ],
+        
+        // Tipos de servicio
         services: {
           mesa: {
-            capacity: 30,
+            enabled: true,
             name: 'Mesa en restaurante',
+            description: 'Reserva de mesa en el restaurante',
+            requiresPayment: false, // No requiere pago anticipado
+            requiresProducts: false, // No requiere seleccionar productos
+            minAdvanceHours: 2, // Mínimo 2 horas de anticipación
           },
           domicilio: {
-            capacity: 20,
+            enabled: true,
             name: 'Servicio a domicilio',
+            description: 'Pedido a domicilio',
+            requiresPayment: true, // Requiere pago anticipado
+            requiresProducts: true, // Requiere seleccionar productos del menú
+            deliveryFee: 5000, // Costo de envío
+            minOrderAmount: 20000, // Pedido mínimo
+            minAdvanceMinutes: 45, // Mínimo 45 minutos de anticipación
           },
         },
       },
@@ -57,6 +113,13 @@ async function main() {
       description: 'Clínica dental especializada en ortodoncia y estética dental',
       phone: '+34 911 222 333',
       active: true,
+      // Configuración de Wompi TEST
+      requiresPayment: true,
+      paymentPercentage: 100, // 100% pago anticipado
+      wompiPublicKey: 'pub_test_AnjRyoWHPu9UW2X3AsXdz5tWyRAljVfU',
+      wompiPrivateKey: 'prv_test_TC7QYes8DCVl9VgjYYcIXcpIZk91jsfi',
+      wompiEventsSecret: 'test_events_FkA3jAe6sj8cMMu0mjrJCPxROKYOlT4k',
+      wompiEnabled: true,
       config: {
         hours: {
           monday: '09:00-19:00',
@@ -67,27 +130,92 @@ async function main() {
           saturday: '10:00-14:00',
           sunday: 'cerrado',
         },
-        capacity: 20,
+        
+        // Recursos físicos (consultorios, sillas, etc.)
+        resources: [
+          { id: 'consultorio-1', name: 'Consultorio 1', capacity: 1, type: 'consultorio', available: true },
+          { id: 'consultorio-2', name: 'Consultorio 2', capacity: 1, type: 'consultorio', available: true },
+          { id: 'consultorio-3', name: 'Consultorio 3', capacity: 1, type: 'consultorio', available: true },
+          { id: 'sala-ortodoncia', name: 'Sala Ortodoncia', capacity: 1, type: 'sala-especializada', available: true },
+          { id: 'sala-blanqueamiento', name: 'Sala Blanqueamiento', capacity: 1, type: 'sala-especializada', available: true },
+        ],
+        
+        // Servicios/Tratamientos ofrecidos
+        products: [
+          { 
+            id: 'serv-1', 
+            name: 'Limpieza dental', 
+            price: 80000, 
+            duration: 30, 
+            category: 'preventivo',
+            description: 'Limpieza profesional dental',
+            available: true 
+          },
+          { 
+            id: 'serv-2', 
+            name: 'Consulta general', 
+            price: 50000, 
+            duration: 20, 
+            category: 'consulta',
+            description: 'Consulta odontológica general',
+            available: true 
+          },
+          { 
+            id: 'serv-3', 
+            name: 'Revisión ortodoncia', 
+            price: 150000, 
+            duration: 45, 
+            category: 'ortodoncia',
+            description: 'Control y ajuste de brackets',
+            available: true 
+          },
+          { 
+            id: 'serv-4', 
+            name: 'Blanqueamiento dental', 
+            price: 200000, 
+            duration: 60, 
+            category: 'estetica',
+            description: 'Blanqueamiento profesional',
+            available: true 
+          },
+          { 
+            id: 'serv-5', 
+            name: 'Extracción simple', 
+            price: 120000, 
+            duration: 30, 
+            category: 'cirugia',
+            description: 'Extracción de pieza dental',
+            available: true 
+          },
+          { 
+            id: 'serv-6', 
+            name: 'Empaste (resina)', 
+            price: 90000, 
+            duration: 40, 
+            category: 'restauracion',
+            description: 'Empaste dental con resina',
+            available: true 
+          },
+          { 
+            id: 'serv-7', 
+            name: 'Endodoncia', 
+            price: 350000, 
+            duration: 90, 
+            category: 'endodoncia',
+            description: 'Tratamiento de conducto',
+            available: true 
+          },
+        ],
+        
+        // Tipos de servicio
         services: {
-          limpieza: {
-            capacity: 10,
-            name: 'Limpieza dental',
-            duration: 30,
-          },
-          consulta: {
-            capacity: 15,
-            name: 'Consulta general',
-            duration: 20,
-          },
-          ortodoncia: {
-            capacity: 5,
-            name: 'Revisión ortodoncia',
-            duration: 45,
-          },
-          blanqueamiento: {
-            capacity: 3,
-            name: 'Blanqueamiento dental',
-            duration: 60,
+          cita: {
+            enabled: true,
+            name: 'Cita en clínica',
+            description: 'Agendar cita en consultorio',
+            requiresPayment: true, // Requiere pago anticipado
+            requiresProducts: true, // Debe seleccionar tratamiento
+            minAdvanceHours: 4, // Mínimo 4 horas de anticipación
           },
         },
       },
@@ -331,6 +459,15 @@ async function main() {
           { type: 'keyword', value: 'están abiertos', weight: 0.9 },
           { type: 'keyword', value: 'consultar', weight: 0.7 },
           { type: 'keyword', value: 'información', weight: 0.6 },
+          { type: 'keyword', value: 'menú', weight: 0.95 },
+          { type: 'keyword', value: 'menu', weight: 0.95 },
+          { type: 'keyword', value: 'carta', weight: 0.9 },
+          { type: 'keyword', value: 'qué tienen', weight: 0.95 },
+          { type: 'keyword', value: 'que tienen', weight: 0.95 },
+          { type: 'keyword', value: 'productos', weight: 0.9 },
+          { type: 'keyword', value: 'opciones', weight: 0.85 },
+          { type: 'keyword', value: 'qué ofrecen', weight: 0.9 },
+          { type: 'keyword', value: 'que ofrecen', weight: 0.9 },
         ],
       },
       examples: {
@@ -346,6 +483,10 @@ async function main() {
           { text: 'quiero información' },
           { text: 'cuándo abren?' },
           { text: 'cuál es el horario?' },
+          { text: 'qué tienen en el menú?' },
+          { text: 'muéstrame el menú' },
+          { text: 'qué productos tienen?' },
+          { text: 'cuáles son las opciones?' },
         ],
       },
     },
@@ -465,8 +606,15 @@ async function main() {
           { type: 'keyword', value: 'tienen citas', weight: 0.9 },
           { type: 'keyword', value: 'cuánto cuesta', weight: 0.85 },
           { type: 'keyword', value: 'precio', weight: 0.8 },
-          { type: 'keyword', value: 'servicios', weight: 0.75 },
-          { type: 'keyword', value: 'tratamientos', weight: 0.75 },
+          { type: 'keyword', value: 'servicios', weight: 0.9 },
+          { type: 'keyword', value: 'tratamientos', weight: 0.9 },
+          { type: 'keyword', value: 'qué servicios', weight: 0.95 },
+          { type: 'keyword', value: 'que servicios', weight: 0.95 },
+          { type: 'keyword', value: 'qué tratamientos', weight: 0.95 },
+          { type: 'keyword', value: 'que tratamientos', weight: 0.95 },
+          { type: 'keyword', value: 'qué ofrecen', weight: 0.9 },
+          { type: 'keyword', value: 'que ofrecen', weight: 0.9 },
+          { type: 'keyword', value: 'opciones', weight: 0.85 },
         ],
       },
       examples: {
@@ -477,6 +625,9 @@ async function main() {
           { text: 'cuánto cuesta una limpieza?' },
           { text: 'qué tratamientos ofrecen?' },
           { text: 'cuándo abren?' },
+          { text: 'qué servicios tienen?' },
+          { text: 'cuáles son los tratamientos?' },
+          { text: 'muéstrame los servicios' },
         ],
       },
     },

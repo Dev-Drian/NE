@@ -108,6 +108,7 @@ IMPORTANTE: Si el mensaje contiene datos (fecha, hora, comensales, teléfono), e
     const isClinicType = company.type === 'clinic' || company.type === 'spa';
     const availableServices = config?.services || {};
     const hasMultipleServices = Object.keys(availableServices).length > 1;
+    const products = config?.products || [];
     
     // Crear lista de servicios disponibles
     let servicesInfo = '';
@@ -116,6 +117,13 @@ IMPORTANTE: Si el mensaje contiene datos (fecha, hora, comensales, teléfono), e
         .map(([key, value]: [string, any]) => `"${key}": ${value.name}`)
         .join(', ');
       servicesInfo = `\n\nSERVICIOS DISPONIBLES (elegir UNO es OBLIGATORIO):\n${servicesList}\nExtrae el servicio mencionado o su key correspondiente.`;
+    }
+    
+    // Crear lista de productos disponibles (para que la IA pueda extraer lo que piden)
+    let productsInfo = '';
+    if (products.length > 0) {
+      const productsList = products.map((p: any) => `"${p.id}": ${p.name} (${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0 }).format(p.price)})`).slice(0, 20).join(', ');
+      productsInfo = `\n\nPRODUCTOS/TRATAMIENTOS DISPONIBLES:\n${productsList}\nSi el usuario menciona algún producto/tratamiento, extrae su ID y nombre.`;
     }
 
     const prompt = `Analiza este mensaje de un cliente y responde SOLO con un JSON válido (sin markdown, sin código, solo JSON):
@@ -135,7 +143,7 @@ PRÓXIMOS DÍAS DE LA SEMANA (si el usuario menciona solo el nombre del día):
 - Próximo domingo: ${proximosDias['domingo']}
 
 Contexto: Cliente de ${company.name} (tipo: ${company.type})
-Mensaje: "${message}"${servicesInfo}
+Mensaje: "${message}"${servicesInfo}${productsInfo}
 
 ${conversationHistory ? `Conversación previa:\n${conversationHistory}\n` : ''}
 ${currentStateInfo}
