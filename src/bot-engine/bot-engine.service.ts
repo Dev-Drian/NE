@@ -91,19 +91,31 @@ export class BotEngineService {
       'qué ofrecen', 'que ofrecen', 'qué hay', 'que hay',
       'opciones', 'catalogo', 'catálogo', 'lista de',
       'que servicios', 'qué servicios', 'cuales servicios', 'cuáles servicios',
+      'cuales son los servicios', 'cuáles son los servicios',
       'que tratamientos', 'qué tratamientos', 'cuales tratamientos',
       'que productos', 'qué productos', 'cuales productos',
-      'cuales son', 'cuáles son', 'que venden', 'qué venden'
+      'cuales son', 'cuáles son', 'que venden', 'qué venden',
+      'cuales son los', 'cuáles son los'
     ];
     // Normalizar también el mensaje sin acentos para mejor matching
     // También normalizar las keywords para hacer match sin importar acentos
     const asksForProducts = productKeywords.some(keyword => {
       const normalizedKeyword = normalizeText(keyword);
-      return normalizedMessage.includes(normalizedKeyword) || lowerMessage.includes(keyword);
+      const matches = normalizedMessage.includes(normalizedKeyword) || lowerMessage.includes(keyword);
+      if (matches) {
+        console.log(`🔍 [PRODUCTOS] Keyword detectada: "${keyword}" en mensaje: "${dto.message}"`);
+      }
+      return matches;
     });
+    console.log(`🔍 [PRODUCTOS] asksForProducts: ${asksForProducts}, isContinuingReservation: ${isContinuingReservation}`);
     
     // Detectar si hay palabras de consulta específicas de horarios/info general (EXCLUIR consultas de productos)
-    const consultaKeywords = ['horario', 'horarios', 'abren', 'cierran', 'atencion', 'que dias', 'cual es el horario', 'cuando abren', 'direccion', 'ubicacion', 'donde estan'];
+    const consultaKeywords = [
+      'horario', 'horarios', 'abren', 'cierran', 'atencion', 'que dias', 
+      'cual es el horario', 'cuando abren', 'direccion', 'ubicacion', 'donde estan',
+      'horario disponible', 'horarios disponibles', 'cuales el horario', 'cuáles el horario',
+      'que horario', 'qué horario', 'que horarios', 'qué horarios'
+    ];
     const hasConsultaKeywords = consultaKeywords.some(keyword => 
       normalizedMessage.includes(keyword)
     ) && !asksForProducts; // NO activar si pregunta por productos
@@ -157,8 +169,11 @@ export class BotEngineService {
       }
     }
     
-    // Si pregunta por productos/servicios y NO está en proceso de reserva, mostrar TODO bien formateado
-    if (asksForProducts && !isContinuingReservation) {
+    // Si pregunta por productos/servicios, mostrar TODO bien formateado
+    // PRIORIDAD MÁXIMA: Si pregunta por productos/servicios, mostrar directamente sin pasar por detección
+    // PERMITIR incluso si está en proceso de reserva, porque el usuario puede querer ver servicios
+    if (asksForProducts) {
+      console.log(`🔍 [PRODUCTOS] Mostrando productos/servicios directamente (isContinuingReservation: ${isContinuingReservation})`);
       const config = company.config as any;
       const products = config?.products || [];
       const services = config?.services || {};
@@ -273,6 +288,14 @@ export class BotEngineService {
         intention: 'saludar',
         confidence: 1.0,
       };
+    } else if (asksForProducts && !lowerMessage.includes('reservar') && !lowerMessage.includes('reserva')) {
+      // Si pregunta por productos/servicios y NO tiene palabras de reserva, priorizar consulta
+      // INCLUSO si estamos en medio de una reserva
+      console.log(`🔍 [DETECCION] Detectado como consultar por asksForProducts`);
+      detection = {
+        intention: 'consultar',
+        confidence: 0.95,
+      };
     } else if (hasConsultaKeywords && !lowerMessage.includes('reservar') && !lowerMessage.includes('reserva')) {
       // Si tiene palabras de consulta y NO tiene palabras de reserva, priorizar consulta
       // INCLUSO si estamos en medio de una reserva
@@ -376,21 +399,35 @@ export class BotEngineService {
       
       // Detectar si preguntan específicamente por horarios SOLAMENTE
       const lowerMsg = dto.message.toLowerCase();
-      const askingOnlyAboutHours = (lowerMsg.includes('horario') || 
-                                    lowerMsg.includes('abren') || 
-                                    lowerMsg.includes('cierran') || 
-                                    lowerMsg.includes('cuando')) &&
-                                   !lowerMsg.includes('servicios') &&
-                                   !lowerMsg.includes('tratamientos') &&
-                                   !lowerMsg.includes('menu') &&
-                                   !lowerMsg.includes('menú') &&
-                                   !lowerMsg.includes('producto') &&
-                                   !lowerMsg.includes('que tienen') &&
-                                   !lowerMsg.includes('qué tienen') &&
-                                   !lowerMsg.includes('carta') &&
-                                   !lowerMsg.includes('ofrecen');
+      const normalizedMsg = normalizeText(lowerMsg);
+      const askingOnlyAboutHours = (
+        normalizedMsg.includes('horario') || 
+        normalizedMsg.includes('abren') || 
+        normalizedMsg.includes('cierran') || 
+        normalizedMsg.includes('cuando') ||
+        normalizedMsg.includes('horario disponible') ||
+        normalizedMsg.includes('horarios disponibles') ||
+        (normalizedMsg.includes('cuales') && normalizedMsg.includes('horario')) ||
+        (normalizedMsg.includes('cuáles') && normalizedMsg.includes('horario'))
+      ) &&
+      !normalizedMsg.includes('servicios') &&
+      !normalizedMsg.includes('tratamientos') &&
+      !normalizedMsg.includes('menu') &&
+      !normalizedMsg.includes('menú') &&
+      !normalizedMsg.includes('producto') &&
+      !normalizedMsg.includes('que tienen') &&
+      !normalizedMsg.includes('qué tienen') &&
+      !normalizedMsg.includes('carta') &&
+      !normalizedMsg.includes('ofrecen');
       
-      let reply = '';
+      // DEBUG: Log para verificar detección
+      console.log(`🔍 [HORARIOS] Mensaje: "${dto.message}"`);
+      console.log(`🔍 [HORARIOS] askingOnlyAboutHours: ${askingOnlyAboutHours}`);
+      console.log(`🔍 [HORARIOS] config?.hours:`, config?.hours);
+      console.log(`🔍 [HORARIOS] hoursText: "${hoursText}"`);
+      
+      // NO declarar 'let reply' aquí - usar la variable del scope superior
+      reply = '';
       let hasContent = false;
       
       // PRIMERO: Si NO preguntan SOLO por horarios y hay productos, mostrarlos SIEMPRE
@@ -479,19 +516,44 @@ export class BotEngineService {
         hasContent = true;
       }
       
-      // TERCERO: Agregar horarios SOLO si preguntan explícitamente
+      // TERCERO: Agregar horarios SIEMPRE si preguntan explícitamente
+      console.log(`🔍 [HORARIOS] Antes de agregar horarios - hasContent: ${hasContent}, askingOnlyAboutHours: ${askingOnlyAboutHours}`);
       if (askingOnlyAboutHours) {
+        console.log(`🔍 [HORARIOS] Entrando en bloque de agregar horarios (askingOnlyAboutHours=true)`);
         if (hasContent) reply += `---\n\n`;
-        reply += `🕐 **Horarios de Atención:**\n${hoursText}\n\n`;
+        if (config?.hours && Object.keys(config.hours).length > 0) {
+          const hoursSection = `🕐 **Horarios de Atención:**\n${hoursText}\n\n`;
+          reply += hoursSection;
+          console.log(`🔍 [HORARIOS] Horarios agregados al reply: "${hoursSection.substring(0, 50)}..."`);
+        } else {
+          const noHoursMsg = `🕐 **Horarios de Atención:**\nNo hay horarios configurados. Por favor contacta directamente para consultar disponibilidad.\n\n`;
+          reply += noHoursMsg;
+          console.log(`🔍 [HORARIOS] Mensaje de "no hay horarios" agregado`);
+        }
         hasContent = true;
+        console.log(`🔍 [HORARIOS] hasContent actualizado a: ${hasContent}, reply length: ${reply.length}`);
+      } else if (!hasContent && (lowerMsg.includes('horario') || lowerMsg.includes('abren') || lowerMsg.includes('cierran'))) {
+        // Fallback: si no hay contenido y menciona horarios, agregarlos
+        console.log(`🔍 [HORARIOS] Fallback: agregando horarios sin askingOnlyAboutHours`);
+        if (config?.hours && Object.keys(config.hours).length > 0) {
+          reply += `🕐 **Horarios de Atención:**\n${hoursText}\n\n`;
+        }
+        hasContent = true;
+      } else {
+        console.log(`🔍 [HORARIOS] NO se agregaron horarios - condición no cumplida`);
       }
+      
+      console.log(`🔍 [HORARIOS] Reply antes de verificar hasContent: "${reply.substring(0, 100)}..."`);
+      console.log(`🔍 [HORARIOS] hasContent final: ${hasContent}`);
       
       // Si no se generó contenido específico, usar respuesta por defecto
       if (!hasContent) {
+        console.log(`🔍 [HORARIOS] Usando respuesta por defecto`);
         reply = detection.suggestedReply || await this.messagesTemplates.getReservationQuery(company.type, hoursText);
       } else {
         // Agregar pregunta final si generamos contenido
         reply += `\n¿Te gustaría hacer una ${company.type === 'restaurant' ? 'reserva' : 'cita'}? 😊`;
+        console.log(`🔍 [HORARIOS] Reply final construido: "${reply.substring(0, 200)}..."`);
       }
       
       // NO resetear stage si estamos en medio de una reserva
@@ -517,6 +579,7 @@ export class BotEngineService {
     }
 
     // 13. Retornar respuesta
+    console.log(`🔍 [RETURN] Intención: ${detection.intention}, Reply length: ${reply?.length || 0}, Reply preview: "${reply?.substring(0, 150) || 'EMPTY'}..."`);
     return {
       reply,
       intention: detection.intention,
