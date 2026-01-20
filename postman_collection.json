@@ -1,0 +1,766 @@
+{
+  "info": {
+    "name": "Bot Reservas - Flujos de Prueba",
+    "description": "Colección completa de flujos de prueba para el bot de reservas",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3030",
+      "type": "string"
+    },
+    {
+      "key": "restaurantId",
+      "value": "3f8e74ba-0002-42b8-8cb2-0c13e8a31b4d",
+      "type": "string"
+    },
+    {
+      "key": "clinicId",
+      "value": "f05c83f1-e88d-43c4-accf-5cea6e951792",
+      "type": "string"
+    },
+    {
+      "key": "phoneJuan",
+      "value": "612345678",
+      "type": "string"
+    },
+    {
+      "key": "phoneMaria",
+      "value": "698765432",
+      "type": "string"
+    },
+    {
+      "key": "phoneCarlos",
+      "value": "611223344",
+      "type": "string"
+    },
+    {
+      "key": "conversationId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "paymentId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "🔄 Limpiar Redis",
+      "item": [
+        {
+          "name": "Limpiar Redis",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "// Limpia Redis después de cada flujo"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "raw",
+              "raw": ""
+            },
+            "url": {
+              "raw": "docker exec bot-reservas-redis redis-cli FLUSHALL",
+              "protocol": "http",
+              "host": ["localhost"]
+            },
+            "description": "Comando para limpiar Redis. Ejecutar después de cada conversación."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "🍽️ Restaurante",
+      "item": [
+        {
+          "name": "1. Saludo",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyId\": \"{{restaurantId}}\",\n  \"phone\": \"{{phoneJuan}}\",\n  \"message\": \"Hola\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/messages",
+              "host": ["{{baseUrl}}"],
+              "path": ["messages"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "2. Consulta Menú",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyId\": \"{{restaurantId}}\",\n  \"phone\": \"{{phoneJuan}}\",\n  \"message\": \"¿Qué tienen en el menú?\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/messages",
+              "host": ["{{baseUrl}}"],
+              "path": ["messages"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "3. Consulta Servicios",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyId\": \"{{restaurantId}}\",\n  \"phone\": \"{{phoneJuan}}\",\n  \"message\": \"¿Qué servicios tienen?\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/messages",
+              "host": ["{{baseUrl}}"],
+              "path": ["messages"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "4. Reserva Completa",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "// Extraer conversationId de la respuesta",
+                  "if (pm.response.code === 200) {",
+                  "    var jsonData = pm.response.json();",
+                  "    if (jsonData.conversationId) {",
+                  "        pm.collectionVariables.set('conversationId', jsonData.conversationId);",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyId\": \"{{restaurantId}}\",\n  \"phone\": \"{{phoneJuan}}\",\n  \"message\": \"Quiero reservar una mesa para mañana a las 8pm para 4 personas, mi teléfono es {{phoneJuan}} y mi nombre es Juan Pérez\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/messages",
+              "host": ["{{baseUrl}}"],
+              "path": ["messages"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "5. Reserva Todo en Uno",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyId\": \"{{restaurantId}}\",\n  \"phone\": \"{{phoneJuan}}\",\n  \"message\": \"Hola, quiero reservar una mesa para pasado mañana a las 8pm para 4 personas, mi teléfono es {{phoneJuan}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/messages",
+              "host": ["{{baseUrl}}"],
+              "path": ["messages"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "6. Consulta Horarios",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyId\": \"{{restaurantId}}\",\n  \"phone\": \"{{phoneJuan}}\",\n  \"message\": \"¿A qué hora abren?\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/messages",
+              "host": ["{{baseUrl}}"],
+              "path": ["messages"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "7. Servicio a Domicilio",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyId\": \"{{restaurantId}}\",\n  \"phone\": \"{{phoneCarlos}}\",\n  \"message\": \"Quiero pedir a domicilio\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/messages",
+              "host": ["{{baseUrl}}"],
+              "path": ["messages"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "8. Especificar Pedido Domicilio",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyId\": \"{{restaurantId}}\",\n  \"phone\": \"{{phoneCarlos}}\",\n  \"message\": \"Quiero 2 pizzas margherita y 1 pasta carbonara para hoy a las 7pm, dirección Calle Principal 123\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/messages",
+              "host": ["{{baseUrl}}"],
+              "path": ["messages"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "9. Cancelar Reservas",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyId\": \"{{restaurantId}}\",\n  \"phone\": \"{{phoneMaria}}\",\n  \"message\": \"Quiero cancelar mis reservas\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/messages",
+              "host": ["{{baseUrl}}"],
+              "path": ["messages"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "10. Seleccionar Reserva por Número",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyId\": \"{{restaurantId}}\",\n  \"phone\": \"{{phoneMaria}}\",\n  \"message\": \"1\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/messages",
+              "host": ["{{baseUrl}}"],
+              "path": ["messages"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "🦷 Clínica",
+      "item": [
+        {
+          "name": "1. Consulta Tratamientos",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyId\": \"{{clinicId}}\",\n  \"phone\": \"{{phoneMaria}}\",\n  \"message\": \"¿Qué tratamientos ofrecen?\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/messages",
+              "host": ["{{baseUrl}}"],
+              "path": ["messages"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "2. Consulta Servicios",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyId\": \"{{clinicId}}\",\n  \"phone\": \"{{phoneMaria}}\",\n  \"message\": \"¿Cuáles son sus servicios?\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/messages",
+              "host": ["{{baseUrl}}"],
+              "path": ["messages"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "3. Agendar Cita",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "// Extraer conversationId de la respuesta",
+                  "if (pm.response.code === 200) {",
+                  "    var jsonData = pm.response.json();",
+                  "    if (jsonData.conversationId) {",
+                  "        pm.collectionVariables.set('conversationId', jsonData.conversationId);",
+                  "        console.log('ConversationId guardado:', jsonData.conversationId);",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyId\": \"{{clinicId}}\",\n  \"phone\": \"{{phoneMaria}}\",\n  \"message\": \"Quiero agendar una cita para mañana a las 2pm\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/messages",
+              "host": ["{{baseUrl}}"],
+              "path": ["messages"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "4. Completar Datos Cita",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyId\": \"{{clinicId}}\",\n  \"phone\": \"{{phoneMaria}}\",\n  \"message\": \"Mi teléfono es {{phoneMaria}} y mi nombre es María García\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/messages",
+              "host": ["{{baseUrl}}"],
+              "path": ["messages"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "5. Cita Todo en Uno",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "// Extraer conversationId de la respuesta",
+                  "if (pm.response.code === 200) {",
+                  "    var jsonData = pm.response.json();",
+                  "    if (jsonData.conversationId) {",
+                  "        pm.collectionVariables.set('conversationId', jsonData.conversationId);",
+                  "        console.log('ConversationId guardado:', jsonData.conversationId);",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyId\": \"{{clinicId}}\",\n  \"phone\": \"{{phoneMaria}}\",\n  \"message\": \"Quiero agendar una cita para el viernes a las 10am, mi nombre es María García y mi teléfono es {{phoneMaria}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/messages",
+              "host": ["{{baseUrl}}"],
+              "path": ["messages"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "6. Consulta Horarios",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyId\": \"{{clinicId}}\",\n  \"phone\": \"{{phoneMaria}}\",\n  \"message\": \"¿Cuáles son sus horarios?\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/messages",
+              "host": ["{{baseUrl}}"],
+              "path": ["messages"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "7. Cancelar Cita",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyId\": \"{{clinicId}}\",\n  \"phone\": \"{{phoneJuan}}\",\n  \"message\": \"Quiero cancelar mi cita\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/messages",
+              "host": ["{{baseUrl}}"],
+              "path": ["messages"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "8. Confirmar Cancelación",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyId\": \"{{clinicId}}\",\n  \"phone\": \"{{phoneJuan}}\",\n  \"message\": \"Sí, confirmo\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/messages",
+              "host": ["{{baseUrl}}"],
+              "path": ["messages"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "9. Validación - Sin Reservas",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyId\": \"{{clinicId}}\",\n  \"phone\": \"{{phoneCarlos}}\",\n  \"message\": \"Quiero cancelar mi cita\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/messages",
+              "host": ["{{baseUrl}}"],
+              "path": ["messages"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "💳 Pagos - Clínica",
+      "item": [
+        {
+          "name": "1. Crear Pago",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "// Extraer paymentId de la respuesta",
+                  "if (pm.response.code === 200 || pm.response.code === 201) {",
+                  "    var jsonData = pm.response.json();",
+                  "    if (jsonData.id) {",
+                  "        pm.collectionVariables.set('paymentId', jsonData.id);",
+                  "        console.log('PaymentId guardado:', jsonData.id);",
+                  "        console.log('Payment URL:', jsonData.paymentUrl);",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyId\": \"{{clinicId}}\",\n  \"conversationId\": \"{{conversationId}}\",\n  \"amount\": 80000,\n  \"description\": \"Pago anticipado - Limpieza dental\",\n  \"customerEmail\": \"maria@example.com\",\n  \"customerName\": \"María García\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/payments",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments"]
+            },
+            "description": "Crea un pago para una conversación. Requiere conversationId válido."
+          },
+          "response": []
+        },
+        {
+          "name": "2. Verificar Estado de Pago",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/payments/{{paymentId}}/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments", "{{paymentId}}", "status"]
+            },
+            "description": "Verifica el estado actual de un pago específico."
+          },
+          "response": []
+        },
+        {
+          "name": "3. Ver Pagos de Conversación",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/payments/conversation/{{conversationId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments", "conversation", "{{conversationId}}"]
+            },
+            "description": "Obtiene todos los pagos asociados a una conversación."
+          },
+          "response": []
+        },
+        {
+          "name": "4. Ver Pago Pendiente",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/payments/conversation/{{conversationId}}/pending",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments", "conversation", "{{conversationId}}", "pending"]
+            },
+            "description": "Obtiene el pago pendiente (si existe) de una conversación."
+          },
+          "response": []
+        },
+        {
+          "name": "5. Webhook Wompi",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-signature",
+                "value": "signature-aqui",
+                "description": "Firma de Wompi para validar el webhook"
+              },
+              {
+                "key": "x-timestamp",
+                "value": "timestamp-aqui",
+                "description": "Timestamp del webhook"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event\": \"transaction.updated\",\n  \"data\": {\n    \"transaction\": {\n      \"id\": \"transaction-id\",\n      \"status\": \"APPROVED\",\n      \"amount_in_cents\": 8000000,\n      \"reference\": \"PAY-1234567890-abc123\"\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/payments/webhook",
+              "host": ["{{baseUrl}}"],
+              "path": ["payments", "webhook"]
+            },
+            "description": "Webhook de Wompi (se ejecuta automáticamente cuando hay cambios en el pago)."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "📊 Consultas - BD",
+      "item": [
+        {
+          "name": "Ver Empresas",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/companies",
+              "host": ["{{baseUrl}}"],
+              "path": ["companies"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Ver Empresa Restaurante",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/companies/{{restaurantId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["companies", "{{restaurantId}}"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Ver Empresa Clínica",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/companies/{{clinicId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["companies", "{{clinicId}}"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Ver Reservas",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/reservations?companyId={{restaurantId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["reservations"],
+              "query": [
+                {
+                  "key": "companyId",
+                  "value": "{{restaurantId}}"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Ver Intenciones",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/intentions?companyId={{restaurantId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["intentions"],
+              "query": [
+                {
+                  "key": "companyId",
+                  "value": "{{restaurantId}}"
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
+

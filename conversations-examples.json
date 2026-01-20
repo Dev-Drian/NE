@@ -1,0 +1,397 @@
+{
+  "baseUrl": "http://localhost:3030",
+  "generatedAt": "2026-01-20T00:35:30.709Z",
+  "companies": {
+    "restaurant": {
+      "id": "3f8e74ba-0002-42b8-8cb2-0c13e8a31b4d",
+      "name": "Restaurante La Pasta",
+      "type": "restaurant",
+      "phone": "+34 912 345 678",
+      "url": "http://localhost:3030/companies/3f8e74ba-0002-42b8-8cb2-0c13e8a31b4d"
+    },
+    "clinic": {
+      "id": "f05c83f1-e88d-43c4-accf-5cea6e951792",
+      "name": "Clínica Dental Sonrisas",
+      "type": "clinic",
+      "phone": "+34 911 222 333",
+      "url": "http://localhost:3030/companies/f05c83f1-e88d-43c4-accf-5cea6e951792"
+    }
+  },
+  "users": [
+    {
+      "id": "f979cfa6-317b-4510-8576-eda6d6906649",
+      "name": "Juan Pérez",
+      "phone": "612345678",
+      "email": "juan@example.com"
+    },
+    {
+      "id": "164729f2-f0de-425b-ba00-5ab4ae944987",
+      "name": "María García",
+      "phone": "698765432",
+      "email": "maria@example.com"
+    },
+    {
+      "id": "12771d03-09df-43d7-beef-443eca89de87",
+      "name": "Carlos López",
+      "phone": "611223344",
+      "email": "carlos@example.com"
+    }
+  ],
+  "conversations": {
+    "restaurant": {
+      "good": [
+        {
+          "description": "Flujo exitoso: Reserva completa con todos los datos",
+          "companyId": "3f8e74ba-0002-42b8-8cb2-0c13e8a31b4d",
+          "userId": "f979cfa6-317b-4510-8576-eda6d6906649",
+          "phone": "612345678",
+          "messages": [
+            {
+              "step": 1,
+              "endpoint": "POST /messages",
+              "url": "http://localhost:3030/messages",
+              "body": {
+                "companyId": "3f8e74ba-0002-42b8-8cb2-0c13e8a31b4d",
+                "phone": "612345678",
+                "message": "Hola, quiero reservar una mesa"
+              },
+              "note": "Primer mensaje: usuario se identifica con su teléfono"
+            },
+            {
+              "step": 2,
+              "endpoint": "POST /messages",
+              "url": "http://localhost:3030/messages",
+              "body": {
+                "companyId": "3f8e74ba-0002-42b8-8cb2-0c13e8a31b4d",
+                "userId": "f979cfa6-317b-4510-8576-eda6d6906649",
+                "message": "Para mañana a las 8pm"
+              },
+              "note": "Segundo mensaje: usar userId del primer mensaje de respuesta"
+            },
+            {
+              "step": 3,
+              "endpoint": "POST /messages",
+              "url": "http://localhost:3030/messages",
+              "body": {
+                "companyId": "3f8e74ba-0002-42b8-8cb2-0c13e8a31b4d",
+                "userId": "f979cfa6-317b-4510-8576-eda6d6906649",
+                "message": "Para 4 personas, mi teléfono es 612345678"
+              },
+              "note": "Tercer mensaje: completa la información faltante"
+            }
+          ]
+        },
+        {
+          "description": "Flujo exitoso: Consulta de horarios y luego reserva",
+          "companyId": "3f8e74ba-0002-42b8-8cb2-0c13e8a31b4d",
+          "userId": "164729f2-f0de-425b-ba00-5ab4ae944987",
+          "phone": "698765432",
+          "messages": [
+            {
+              "step": 1,
+              "endpoint": "POST /messages",
+              "url": "http://localhost:3030/messages",
+              "body": {
+                "companyId": "3f8e74ba-0002-42b8-8cb2-0c13e8a31b4d",
+                "phone": "698765432",
+                "message": "¿Qué horarios tienen?"
+              },
+              "note": "Consulta inicial de horarios"
+            },
+            {
+              "step": 2,
+              "endpoint": "POST /messages",
+              "url": "http://localhost:3030/messages",
+              "body": {
+                "companyId": "3f8e74ba-0002-42b8-8cb2-0c13e8a31b4d",
+                "userId": "164729f2-f0de-425b-ba00-5ab4ae944987",
+                "message": "Perfecto, quiero reservar una mesa para el viernes a las 7pm para 2 personas"
+              },
+              "note": "Reserva con todos los datos en un solo mensaje"
+            }
+          ]
+        }
+      ],
+      "bad": [
+        {
+          "description": "Flujo con errores: Datos incompletos y mensajes ambiguos",
+          "companyId": "3f8e74ba-0002-42b8-8cb2-0c13e8a31b4d",
+          "userId": "12771d03-09df-43d7-beef-443eca89de87",
+          "phone": "611223344",
+          "messages": [
+            {
+              "step": 1,
+              "endpoint": "POST /messages",
+              "url": "http://localhost:3030/messages",
+              "body": {
+                "companyId": "3f8e74ba-0002-42b8-8cb2-0c13e8a31b4d",
+                "phone": "611223344",
+                "message": "quiero algo"
+              },
+              "note": "Mensaje ambiguo - el bot debe pedir clarificación"
+            },
+            {
+              "step": 2,
+              "endpoint": "POST /messages",
+              "url": "http://localhost:3030/messages",
+              "body": {
+                "companyId": "3f8e74ba-0002-42b8-8cb2-0c13e8a31b4d",
+                "userId": "12771d03-09df-43d7-beef-443eca89de87",
+                "message": "para cuando sea"
+              },
+              "note": "Fecha ambigua - no se especifica día concreto"
+            },
+            {
+              "step": 3,
+              "endpoint": "POST /messages",
+              "url": "http://localhost:3030/messages",
+              "body": {
+                "companyId": "3f8e74ba-0002-42b8-8cb2-0c13e8a31b4d",
+                "userId": "12771d03-09df-43d7-beef-443eca89de87",
+                "message": "no sé cuántos"
+              },
+              "note": "Falta información crítica - número de personas"
+            }
+          ]
+        },
+        {
+          "description": "Flujo con errores: Cancelación sin información de reserva",
+          "companyId": "3f8e74ba-0002-42b8-8cb2-0c13e8a31b4d",
+          "userId": "f979cfa6-317b-4510-8576-eda6d6906649",
+          "phone": "612345678",
+          "messages": [
+            {
+              "step": 1,
+              "endpoint": "POST /messages",
+              "url": "http://localhost:3030/messages",
+              "body": {
+                "companyId": "3f8e74ba-0002-42b8-8cb2-0c13e8a31b4d",
+                "phone": "612345678",
+                "message": "quiero cancelar"
+              },
+              "note": "Intenta cancelar sin especificar qué reserva"
+            },
+            {
+              "step": 2,
+              "endpoint": "POST /messages",
+              "url": "http://localhost:3030/messages",
+              "body": {
+                "companyId": "3f8e74ba-0002-42b8-8cb2-0c13e8a31b4d",
+                "userId": "f979cfa6-317b-4510-8576-eda6d6906649",
+                "message": "mi reserva de ayer"
+              },
+              "note": "Información vaga - \"de ayer\" puede no encontrar la reserva exacta"
+            }
+          ]
+        }
+      ]
+    },
+    "clinic": {
+      "good": [
+        {
+          "description": "Flujo exitoso: Cita completa con tratamiento especificado",
+          "companyId": "f05c83f1-e88d-43c4-accf-5cea6e951792",
+          "userId": "f979cfa6-317b-4510-8576-eda6d6906649",
+          "phone": "612345678",
+          "messages": [
+            {
+              "step": 1,
+              "endpoint": "POST /messages",
+              "url": "http://localhost:3030/messages",
+              "body": {
+                "companyId": "f05c83f1-e88d-43c4-accf-5cea6e951792",
+                "phone": "612345678",
+                "message": "Hola, necesito una cita para limpieza dental"
+              },
+              "note": "Especifica el tratamiento deseado"
+            },
+            {
+              "step": 2,
+              "endpoint": "POST /messages",
+              "url": "http://localhost:3030/messages",
+              "body": {
+                "companyId": "f05c83f1-e88d-43c4-accf-5cea6e951792",
+                "userId": "f979cfa6-317b-4510-8576-eda6d6906649",
+                "message": "Para el lunes a las 10am"
+              },
+              "note": "Proporciona fecha y hora específica"
+            },
+            {
+              "step": 3,
+              "endpoint": "POST /messages",
+              "url": "http://localhost:3030/messages",
+              "body": {
+                "companyId": "f05c83f1-e88d-43c4-accf-5cea6e951792",
+                "userId": "f979cfa6-317b-4510-8576-eda6d6906649",
+                "message": "Mi teléfono es 612345678"
+              },
+              "note": "Confirma datos de contacto"
+            }
+          ]
+        },
+        {
+          "description": "Flujo exitoso: Consulta de servicios y luego agendar",
+          "companyId": "f05c83f1-e88d-43c4-accf-5cea6e951792",
+          "userId": "164729f2-f0de-425b-ba00-5ab4ae944987",
+          "phone": "698765432",
+          "messages": [
+            {
+              "step": 1,
+              "endpoint": "POST /messages",
+              "url": "http://localhost:3030/messages",
+              "body": {
+                "companyId": "f05c83f1-e88d-43c4-accf-5cea6e951792",
+                "phone": "698765432",
+                "message": "¿Qué tratamientos ofrecen?"
+              },
+              "note": "Consulta de servicios disponibles"
+            },
+            {
+              "step": 2,
+              "endpoint": "POST /messages",
+              "url": "http://localhost:3030/messages",
+              "body": {
+                "companyId": "f05c83f1-e88d-43c4-accf-5cea6e951792",
+                "userId": "164729f2-f0de-425b-ba00-5ab4ae944987",
+                "message": "Quiero una cita para blanqueamiento dental el martes a las 2pm"
+              },
+              "note": "Agenda con tratamiento, fecha y hora especificados"
+            }
+          ]
+        }
+      ],
+      "bad": [
+        {
+          "description": "Flujo con errores: Información insuficiente para cita",
+          "companyId": "f05c83f1-e88d-43c4-accf-5cea6e951792",
+          "userId": "12771d03-09df-43d7-beef-443eca89de87",
+          "phone": "611223344",
+          "messages": [
+            {
+              "step": 1,
+              "endpoint": "POST /messages",
+              "url": "http://localhost:3030/messages",
+              "body": {
+                "companyId": "f05c83f1-e88d-43c4-accf-5cea6e951792",
+                "phone": "611223344",
+                "message": "necesito cita"
+              },
+              "note": "No especifica qué tipo de tratamiento necesita"
+            },
+            {
+              "step": 2,
+              "endpoint": "POST /messages",
+              "url": "http://localhost:3030/messages",
+              "body": {
+                "companyId": "f05c83f1-e88d-43c4-accf-5cea6e951792",
+                "userId": "12771d03-09df-43d7-beef-443eca89de87",
+                "message": "no sé para qué"
+              },
+              "note": "Usuario no sabe qué servicio necesita - requiere orientación"
+            }
+          ]
+        },
+        {
+          "description": "Flujo con errores: Fecha inválida o fuera de horario",
+          "companyId": "f05c83f1-e88d-43c4-accf-5cea6e951792",
+          "userId": "f979cfa6-317b-4510-8576-eda6d6906649",
+          "phone": "612345678",
+          "messages": [
+            {
+              "step": 1,
+              "endpoint": "POST /messages",
+              "url": "http://localhost:3030/messages",
+              "body": {
+                "companyId": "f05c83f1-e88d-43c4-accf-5cea6e951792",
+                "phone": "612345678",
+                "message": "quiero cita para limpieza el domingo a las 8pm"
+              },
+              "note": "Intenta agendar en domingo (la clínica está cerrada) y a las 8pm (fuera de horario)"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "endpoints": {
+    "messages": {
+      "post": {
+        "url": "http://localhost:3030/messages",
+        "method": "POST",
+        "description": "Enviar mensaje al bot",
+        "body": {
+          "companyId": "UUID de la empresa (requerido)",
+          "userId": "UUID del usuario (opcional, se crea automáticamente)",
+          "phone": "Teléfono del usuario (opcional, se extrae del mensaje)",
+          "message": "Texto del mensaje (requerido)"
+        }
+      }
+    },
+    "companies": {
+      "getAll": {
+        "url": "http://localhost:3030/companies",
+        "method": "GET",
+        "description": "Listar todas las empresas"
+      },
+      "getOne": {
+        "url": "http://localhost:3030/companies/:id",
+        "method": "GET",
+        "description": "Obtener empresa por ID",
+        "example": "http://localhost:3030/companies/3f8e74ba-0002-42b8-8cb2-0c13e8a31b4d"
+      },
+      "create": {
+        "url": "http://localhost:3030/companies",
+        "method": "POST",
+        "description": "Crear nueva empresa"
+      }
+    },
+    "reservations": {
+      "getAll": {
+        "url": "http://localhost:3030/reservations?companyId=UUID",
+        "method": "GET",
+        "description": "Listar reservas (opcional filtrar por empresa)",
+        "example": "http://localhost:3030/reservations?companyId=3f8e74ba-0002-42b8-8cb2-0c13e8a31b4d"
+      },
+      "getOne": {
+        "url": "http://localhost:3030/reservations/:id",
+        "method": "GET",
+        "description": "Obtener reserva por ID"
+      },
+      "create": {
+        "url": "http://localhost:3030/reservations",
+        "method": "POST",
+        "description": "Crear nueva reserva"
+      }
+    },
+    "intentions": {
+      "getAll": {
+        "url": "http://localhost:3030/intentions?companyId=UUID",
+        "method": "GET",
+        "description": "Listar intenciones (requiere companyId)",
+        "example": "http://localhost:3030/intentions?companyId=3f8e74ba-0002-42b8-8cb2-0c13e8a31b4d"
+      },
+      "getOne": {
+        "url": "http://localhost:3030/intentions/:id",
+        "method": "GET",
+        "description": "Obtener intención por ID"
+      }
+    },
+    "payments": {
+      "create": {
+        "url": "http://localhost:3030/payments",
+        "method": "POST",
+        "description": "Crear pago"
+      },
+      "checkStatus": {
+        "url": "http://localhost:3030/payments/:id/status",
+        "method": "GET",
+        "description": "Verificar estado de pago"
+      },
+      "webhook": {
+        "url": "http://localhost:3030/payments/webhook",
+        "method": "POST",
+        "description": "Webhook de Wompi para notificaciones de pago"
+      }
+    }
+  }
+}

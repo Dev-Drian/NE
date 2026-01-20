@@ -49,18 +49,31 @@ export class Layer3OpenAIService {
     }
 
     const context = await this.conversationsService.getContext(userId, companyId);
+    
+    // Usar más historial de conversación para mejor contexto (últimos 15 mensajes)
     const conversationHistory = context.conversationHistory
-      .slice(-10)
-      .map((msg) => `${msg.role}: ${msg.content}`)
+      .slice(-15)
+      .map((msg) => `${msg.role === 'user' ? 'Cliente' : 'Asistente'}: ${msg.content}`)
       .join('\n');
 
-    // Información del estado actual (si estamos en modo collecting)
-    const currentStateInfo = context.stage === 'collecting' 
-      ? `\nEstado actual: Estamos en proceso de recopilar datos para una reserva.
-Datos ya recopilados: ${JSON.stringify(context.collectedData)}
-Última intención: ${context.lastIntention || 'ninguna'}
-IMPORTANTE: Si el mensaje contiene datos (fecha, hora, comensales, teléfono), extrae SOLO los nuevos datos.`
-      : '';
+    // Información del estado actual y contexto previo mejorado
+    let currentStateInfo = '';
+    
+    if (context.stage === 'collecting') {
+      currentStateInfo = `\n**ESTADO ACTUAL DE LA CONVERSACIÓN:**
+- Estamos en proceso de recopilar datos para una reserva
+- Datos ya recopilados: ${JSON.stringify(context.collectedData)}
+- Última intención: ${context.lastIntention || 'ninguna'}
+- IMPORTANTE: Si el mensaje contiene datos (fecha, hora, comensales, teléfono, servicio), extrae SOLO los nuevos datos que aún no están en los datos recopilados.`;
+    } else if (context.conversationHistory.length > 0) {
+      // Si hay historial pero no estamos en collecting, incluir contexto general
+      const lastMessages = context.conversationHistory.slice(-3);
+      const recentContext = lastMessages
+        .map((msg) => `${msg.role === 'user' ? 'Cliente' : 'Asistente'}: ${msg.content}`)
+        .join('\n');
+      
+      currentStateInfo = `\n**CONTEXTO DE CONVERSACIÓN RECIENTE:**\n${recentContext}\n\nIMPORTANTE: Considera el contexto anterior para entender mejor la intención del usuario.`;
+    }
 
 
     // Obtener la fecha actual de Colombia
@@ -110,13 +123,34 @@ IMPORTANTE: Si el mensaje contiene datos (fecha, hora, comensales, teléfono), e
     const hasMultipleServices = Object.keys(availableServices).length > 1;
     const products = config?.products || [];
     
-    // Crear lista de servicios disponibles
+    // Crear lista de servicios disponibles con sinónimos
     let servicesInfo = '';
     if (hasMultipleServices) {
       const servicesList = Object.entries(availableServices)
-        .map(([key, value]: [string, any]) => `"${key}": ${value.name}`)
-        .join(', ');
-      servicesInfo = `\n\nSERVICIOS DISPONIBLES (elegir UNO es OBLIGATORIO):\n${servicesList}\nExtrae el servicio mencionado o su key correspondiente.`;
+        .map(([key, value]: [string, any]) => {
+          // Generar sinónimos comunes según el tipo de servicio
+          const synonyms: string[] = [];
+          const serviceName = (value.name || '').toLowerCase();
+          
+          // Sinónimos para servicios comunes
+          if (key === 'domicilio' || serviceName.includes('domicilio') || serviceName.includes('delivery')) {
+            synonyms.push('pedir a domicilio', 'domicilio', 'delivery', 'a domicilio', 'envío', 'pedido a domicilio');
+          }
+          if (key === 'mesa' || serviceName.includes('mesa') || serviceName.includes('restaurante')) {
+            synonyms.push('mesa', 'restaurante', 'comer aquí', 'en el restaurante', 'reservar mesa');
+          }
+          if (key === 'limpieza' || serviceName.includes('limpieza')) {
+            synonyms.push('limpieza', 'limpieza dental', 'profilaxis');
+          }
+          if (key === 'consulta' || serviceName.includes('consulta')) {
+            synonyms.push('consulta', 'revisión', 'cita');
+          }
+          
+          const synonymsText = synonyms.length > 0 ? ` (sinónimos: ${synonyms.join(', ')})` : '';
+          return `"${key}": ${value.name}${synonymsText}`;
+        })
+        .join('\n');
+      servicesInfo = `\n\n⚠️ SERVICIOS DISPONIBLES (elegir UNO es OBLIGATORIO - DEBES EXTRAER EL SERVICIO):\n${servicesList}\n\nIMPORTANTE: Si el usuario menciona alguna variante o sinónimo del servicio, SIEMPRE extrae la KEY correspondiente en el campo "service". Ejemplos:\n- Si el usuario dice "pedir a domicilio", "domicilio", "delivery", "a domicilio", "envío", "pedido a domicilio" → service: "domicilio"\n- Si el usuario dice "mesa", "reservar mesa", "en el restaurante", "comer aquí" → service: "mesa"\n\nSI EL USUARIO MENCIONA CUALQUIER VARIANTE DE UN SERVICIO, DEBES EXTRAERLO. NO PUEDES DEJAR service: null SI HAY UNA MENCIÓN DEL SERVICIO EN EL MENSAJE.`;
     }
     
     // Crear lista de productos disponibles (para que la IA pueda extraer lo que piden)
@@ -170,8 +204,8 @@ INSTRUCCIONES CRÍTICAS:
    - "mi numero es 45353535" → phone: "45353535"
    - "llamame al 3001234567" → phone: "3001234567"
    
+   ${hasMultipleServices ? '⚠️ SERVICIO (MUY IMPORTANTE - OBLIGATORIO): Debes SIEMPRE extraer el servicio mencionado usando la KEY exacta de la lista de SERVICIOS DISPONIBLES arriba. Busca cualquier mención del servicio en el mensaje del usuario:\n   - Si el usuario dice "pedir a domicilio", "domicilio", "delivery", "a domicilio", "envío", "pedido a domicilio" → service: "domicilio"\n   - Si el usuario dice "mesa", "reservar mesa", "en el restaurante", "comer aquí", "mesa en restaurante" → service: "mesa"\n   - Si el usuario dice variantes de "limpieza" o "consulta" → busca la key correspondiente\n   - SIEMPRE busca coincidencias con las keys y sinónimos listados en SERVICIOS DISPONIBLES\n   - NO dejes service: null si hay cualquier mención de un servicio en el mensaje' : ''}
    PERSONAS/COMENSALES: ${isClinicType ? 'NO extraer - las clínicas y spas NO necesitan número de personas (siempre es 1)' : '"para 2", "somos 4", "2 personas" → guests: número'}
-   ${hasMultipleServices ? '\n   SERVICIO (OBLIGATORIO): Extrae el nombre del servicio mencionado y usa su key. Ej: "limpieza" → service: "limpieza"' : ''}
 
 2. DETECTAR INTENCIÓN:
    - "reservar": El usuario QUIERE hacer una reserva (verbos: quiero, necesito, quisiera, agendar)
@@ -220,6 +254,104 @@ Responde SOLO con este JSON:
 
       const parsed = JSON.parse(cleanContent);
       
+      // DEBUG: Log de la respuesta de OpenAI para servicios
+      if (hasMultipleServices) {
+        console.log(`🔍 [DEBUG] Servicio extraído por OpenAI:`, parsed.extractedData?.service || 'NO EXTRAÍDO');
+        console.log(`🔍 [DEBUG] MissingFields de OpenAI:`, parsed.missingFields || []);
+      }
+      
+      // VALIDAR Y NORMALIZAR DATOS EXTRAÍDOS
+      if (parsed.extractedData) {
+        // VALIDACIÓN 1: Teléfono - debe tener 7-10 dígitos
+        if (parsed.extractedData.phone) {
+          const phone = parsed.extractedData.phone.toString().replace(/\D/g, '');
+          if (phone.length < 7 || phone.length > 10) {
+            console.warn(`⚠️ Teléfono inválido detectado: ${parsed.extractedData.phone}`);
+            delete parsed.extractedData.phone;
+            if (!parsed.missingFields) parsed.missingFields = [];
+            if (!parsed.missingFields.includes('phone')) {
+              parsed.missingFields.push('phone');
+            }
+          } else {
+            parsed.extractedData.phone = phone;
+          }
+        }
+        
+        // VALIDACIÓN 2: Fecha - debe tener formato YYYY-MM-DD
+        if (parsed.extractedData.date) {
+          const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+          if (!dateRegex.test(parsed.extractedData.date)) {
+            console.warn(`⚠️ Fecha inválida detectada: ${parsed.extractedData.date}`);
+            delete parsed.extractedData.date;
+            if (!parsed.missingFields) parsed.missingFields = [];
+            if (!parsed.missingFields.includes('date')) {
+              parsed.missingFields.push('date');
+            }
+          }
+        }
+        
+        // VALIDACIÓN 3: Hora - debe tener formato HH:MM
+        if (parsed.extractedData.time) {
+          const timeRegex = /^\d{2}:\d{2}$/;
+          if (!timeRegex.test(parsed.extractedData.time)) {
+            console.warn(`⚠️ Hora inválida detectada: ${parsed.extractedData.time}`);
+            delete parsed.extractedData.time;
+            if (!parsed.missingFields) parsed.missingFields = [];
+            if (!parsed.missingFields.includes('time')) {
+              parsed.missingFields.push('time');
+            }
+          }
+        }
+        
+        // VALIDACIÓN 4: Comensales - debe ser número positivo
+        if (parsed.extractedData.guests !== null && parsed.extractedData.guests !== undefined) {
+          const guests = parseInt(parsed.extractedData.guests);
+          if (isNaN(guests) || guests < 1 || guests > 50) {
+            console.warn(`⚠️ Número de comensales inválido: ${parsed.extractedData.guests}`);
+            delete parsed.extractedData.guests;
+            if (!parsed.missingFields) parsed.missingFields = [];
+            if (!parsed.missingFields.includes('guests')) {
+              parsed.missingFields.push('guests');
+            }
+          } else {
+            parsed.extractedData.guests = guests;
+          }
+        }
+        
+        // VALIDACIÓN 5: Servicio - debe existir en la lista de servicios disponibles si hay múltiples
+        if (hasMultipleServices && parsed.extractedData.service) {
+          const serviceKey = parsed.extractedData.service.toLowerCase().trim();
+          // Normalizar el servicio: buscar coincidencia exacta o por nombre
+          let matchedServiceKey: string | null = null;
+          
+          for (const [key, value] of Object.entries(availableServices)) {
+            const serviceName = (value as any)?.name?.toLowerCase() || '';
+            if (key.toLowerCase() === serviceKey || serviceName.includes(serviceKey) || serviceKey.includes(key.toLowerCase())) {
+              matchedServiceKey = key;
+              break;
+            }
+          }
+          
+          if (matchedServiceKey) {
+            parsed.extractedData.service = matchedServiceKey;
+            console.log(`✅ Servicio extraído y normalizado: "${serviceKey}" → "${matchedServiceKey}"`);
+          } else {
+            console.warn(`⚠️ Servicio no reconocido: "${serviceKey}". Servicios disponibles: ${Object.keys(availableServices).join(', ')}`);
+            delete parsed.extractedData.service;
+            if (!parsed.missingFields) parsed.missingFields = [];
+            if (!parsed.missingFields.includes('service')) {
+              parsed.missingFields.push('service');
+            }
+          }
+        } else if (hasMultipleServices && !parsed.extractedData.service) {
+          // Si hay múltiples servicios pero no se extrajo ninguno, agregarlo a missingFields
+          if (!parsed.missingFields) parsed.missingFields = [];
+          if (!parsed.missingFields.includes('service')) {
+            parsed.missingFields.push('service');
+          }
+        }
+      }
+      
       // Normalizar campos missingFields al español
       const missingFieldsMap: { [key: string]: string } = {
         date: 'fecha',
@@ -227,6 +359,7 @@ Responde SOLO con este JSON:
         guests: 'comensales',
         phone: 'teléfono',
         name: 'nombre',
+        service: 'servicio',
       };
 
       const missingFields = parsed.missingFields || [];

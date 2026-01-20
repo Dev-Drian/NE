@@ -38,6 +38,30 @@ export class AvailabilityService {
       capacity = resources.reduce((sum: number, r: any) => sum + (r.capacity || 0), 0);
     }
 
+    // VALIDACIÓN 1: No permitir reservas en el pasado
+    const now = new Date();
+    const [year_req, month_req, day_req] = data.date.split('-').map(Number);
+    const [hours_req, minutes_req] = data.time.split(':').map(Number);
+    const requestedDateTime = new Date(year_req, month_req - 1, day_req, hours_req, minutes_req);
+    
+    if (requestedDateTime < now) {
+      return {
+        isAvailable: false,
+        message: '❌ No puedes hacer reservas para fechas u horas pasadas. Por favor elige una fecha y hora futura.',
+      };
+    }
+    
+    // VALIDACIÓN 2: Tiempo mínimo de anticipación (por defecto 1 hora)
+    const minAdvanceHours = config?.minAdvanceHours || 1;
+    const hoursUntilReservation = (requestedDateTime.getTime() - now.getTime()) / (1000 * 60 * 60);
+    
+    if (hoursUntilReservation < minAdvanceHours) {
+      return {
+        isAvailable: false,
+        message: `⏰ Las reservas deben hacerse con al menos ${minAdvanceHours} hora${minAdvanceHours > 1 ? 's' : ''} de anticipación. Por favor elige un horario más tarde.`,
+      };
+    }
+
     // Verificar horario de la empresa
     // IMPORTANTE: Parsear la fecha correctamente para evitar problemas de zona horaria
     const [year, month, day] = data.date.split('-').map(Number);

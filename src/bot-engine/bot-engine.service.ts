@@ -84,10 +84,23 @@ export class BotEngineService {
     );
     
     // Detectar si pregunta por productos/menú/servicios (PRIORIDAD ALTA)
-    const productKeywords = ['menu', 'productos', 'que tienen', 'opciones', 'carta', 'que hay', 'que venden', 'que ofrecen'];
-    const asksForProducts = productKeywords.some(keyword => 
-      normalizedMessage.includes(keyword)
-    );
+    // MEJORADO: Incluir todas las variantes de "servicios", "tratamientos", "menú"
+    const productKeywords = [
+      'menu', 'menú', 'carta', 'productos', 'tratamientos', 
+      'servicios', 'servicio', 'qué tienen', 'que tienen', 
+      'qué ofrecen', 'que ofrecen', 'qué hay', 'que hay',
+      'opciones', 'catalogo', 'catálogo', 'lista de',
+      'que servicios', 'qué servicios', 'cuales servicios', 'cuáles servicios',
+      'que tratamientos', 'qué tratamientos', 'cuales tratamientos',
+      'que productos', 'qué productos', 'cuales productos',
+      'cuales son', 'cuáles son', 'que venden', 'qué venden'
+    ];
+    // Normalizar también el mensaje sin acentos para mejor matching
+    // También normalizar las keywords para hacer match sin importar acentos
+    const asksForProducts = productKeywords.some(keyword => {
+      const normalizedKeyword = normalizeText(keyword);
+      return normalizedMessage.includes(normalizedKeyword) || lowerMessage.includes(keyword);
+    });
     
     // Detectar si hay palabras de consulta específicas de horarios/info general (EXCLUIR consultas de productos)
     const consultaKeywords = ['horario', 'horarios', 'abren', 'cierran', 'atencion', 'que dias', 'cual es el horario', 'cuando abren', 'direccion', 'ubicacion', 'donde estan'];
@@ -144,34 +157,103 @@ export class BotEngineService {
       }
     }
     
-    // Si pregunta por productos y NO está en proceso de reserva, mostrar lista
+    // Si pregunta por productos/servicios y NO está en proceso de reserva, mostrar TODO bien formateado
     if (asksForProducts && !isContinuingReservation) {
       const config = company.config as any;
       const products = config?.products || [];
+      const services = config?.services || {};
       
-      if (products.length > 0) {
-        let reply = `📋 **${company.type === 'restaurant' ? 'Nuestro Menú' : 'Nuestros Servicios'}:**\n\n`;
+      if (products.length > 0 || Object.keys(services).length > 0) {
+        let reply = '';
         
-        // Agrupar por categoría
-        const grouped: any = {};
-        products.forEach((p: any) => {
-          if (!grouped[p.category]) grouped[p.category] = [];
-          grouped[p.category].push(p);
-        });
-        
-        for (const [category, items] of Object.entries(grouped)) {
-          reply += `**${category.charAt(0).toUpperCase() + category.slice(1)}**\n`;
-          (items as any[]).forEach((item: any) => {
-            const price = new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0 }).format(item.price);
-            reply += `• ${item.name} - ${price}`;
-            if (item.duration) reply += ` (${item.duration} min)`;
-            if (item.description) reply += ` - ${item.description}`;
-            reply += `\n`;
+        // 1. Mostrar PRODUCTOS/TRATAMIENTOS/MENÚ primero
+        if (products.length > 0) {
+          reply += `📋 **${company.type === 'restaurant' ? '🍽️ Nuestro Menú' : company.type === 'clinic' ? '🦷 Nuestros Tratamientos' : '📦 Nuestros Productos'}:**\n\n`;
+          
+          // Agrupar por categoría
+          const grouped: any = {};
+          products.forEach((p: any) => {
+            if (!grouped[p.category]) grouped[p.category] = [];
+            grouped[p.category].push(p);
           });
-          reply += `\n`;
+          
+          for (const [category, items] of Object.entries(grouped)) {
+            const categoryName = category.charAt(0).toUpperCase() + category.slice(1);
+            reply += `**${categoryName}:**\n`;
+            (items as any[]).forEach((item: any) => {
+              const price = new Intl.NumberFormat('es-CO', { 
+                style: 'currency', 
+                currency: 'COP', 
+                minimumFractionDigits: 0 
+              }).format(item.price);
+              reply += `  • ${item.name} - ${price}`;
+              if (item.duration) reply += ` ⏱️ ${item.duration} min`;
+              if (item.description) reply += `\n    ${item.description}`;
+              reply += `\n`;
+            });
+            reply += `\n`;
+          }
         }
         
-        reply += `¿Te gustaría hacer una reserva? 😊`;
+        // 2. Mostrar SERVICIOS después (si existen)
+        if (Object.keys(services).length > 0) {
+          if (products.length > 0) {
+            reply += `\n---\n\n`;
+          }
+          reply += `🛎️ **Tipos de ${company.type === 'restaurant' ? 'Reserva' : 'Cita'} Disponibles:**\n\n`;
+          
+          Object.entries(services).forEach(([key, value]: [string, any]) => {
+            if (value.enabled) {
+              reply += `**${value.name}**\n`;
+              if (value.description) reply += `  ${value.description}\n`;
+              
+              // Información adicional del servicio
+              const details: string[] = [];
+              if (value.minAdvanceHours) {
+                details.push(`⏰ Mínimo ${value.minAdvanceHours} horas de anticipación`);
+              }
+              if (value.minAdvanceMinutes) {
+                const hours = Math.floor(value.minAdvanceMinutes / 60);
+                const mins = value.minAdvanceMinutes % 60;
+                if (hours > 0) {
+                  details.push(`⏰ Mínimo ${hours}h ${mins > 0 ? mins + 'min' : ''} de anticipación`);
+                } else {
+                  details.push(`⏰ Mínimo ${value.minAdvanceMinutes} minutos de anticipación`);
+                }
+              }
+              if (value.requiresPayment) {
+                details.push(`💳 Requiere pago anticipado`);
+              }
+              if (value.requiresProducts) {
+                details.push(`📋 Requiere seleccionar productos`);
+              }
+              if (value.deliveryFee) {
+                const fee = new Intl.NumberFormat('es-CO', { 
+                  style: 'currency', 
+                  currency: 'COP', 
+                  minimumFractionDigits: 0 
+                }).format(value.deliveryFee);
+                details.push(`🚚 Costo de envío: ${fee}`);
+              }
+              if (value.minOrderAmount) {
+                const minAmount = new Intl.NumberFormat('es-CO', { 
+                  style: 'currency', 
+                  currency: 'COP', 
+                  minimumFractionDigits: 0 
+                }).format(value.minOrderAmount);
+                details.push(`💰 Pedido mínimo: ${minAmount}`);
+              }
+              
+              if (details.length > 0) {
+                reply += details.map(d => `  ${d}`).join('\n') + '\n';
+              }
+              reply += `\n`;
+            }
+          });
+        }
+        
+        // 3. Pregunta final
+        reply += `\n¿Te gustaría hacer una ${company.type === 'restaurant' ? 'reserva' : 'cita'}? 😊`;
         
         await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
         return {
@@ -285,27 +367,131 @@ export class BotEngineService {
         detection.missingFields = result.missingFields;
       }
     } else if (detection.intention === 'cancelar') {
-      reply = detection.suggestedReply || await this.messagesTemplates.getReservationCancel(company.type);
+      // Implementar cancelación real de reservas
+      reply = await this.handleCancellation(dto, context, company);
       newState.stage = 'idle';
     } else if (detection.intention === 'consultar') {
       const config = company.config as any;
       const hoursText = this.formatHours(config?.hours);
       
-      // Si preguntan por servicios y hay servicios configurados, mostrarlos
-      const lowerMessage = dto.message.toLowerCase();
-      const askingAboutServices = lowerMessage.includes('servicios') || 
-                                  lowerMessage.includes('tratamientos') || 
-                                  lowerMessage.includes('qué servicios') ||
-                                  lowerMessage.includes('cuáles son') ||
-                                  lowerMessage.includes('que ofrecen');
+      // Detectar si preguntan específicamente por horarios SOLAMENTE
+      const lowerMsg = dto.message.toLowerCase();
+      const askingOnlyAboutHours = (lowerMsg.includes('horario') || 
+                                    lowerMsg.includes('abren') || 
+                                    lowerMsg.includes('cierran') || 
+                                    lowerMsg.includes('cuando')) &&
+                                   !lowerMsg.includes('servicios') &&
+                                   !lowerMsg.includes('tratamientos') &&
+                                   !lowerMsg.includes('menu') &&
+                                   !lowerMsg.includes('menú') &&
+                                   !lowerMsg.includes('producto') &&
+                                   !lowerMsg.includes('que tienen') &&
+                                   !lowerMsg.includes('qué tienen') &&
+                                   !lowerMsg.includes('carta') &&
+                                   !lowerMsg.includes('ofrecen');
       
-      if (askingAboutServices && config?.services) {
-        const servicesList = Object.entries(config.services)
-          .map(([key, value]: [string, any]) => `• ${value.name}`)
-          .join('\n');
-        reply = `Ofrecemos los siguientes servicios:\n\n${servicesList}\n\n¿Te gustaría agendar una cita?`;
-      } else {
+      let reply = '';
+      let hasContent = false;
+      
+      // PRIMERO: Si NO preguntan SOLO por horarios y hay productos, mostrarlos SIEMPRE
+      if (!askingOnlyAboutHours && config?.products && Array.isArray(config.products) && config.products.length > 0) {
+        reply += `📋 **${company.type === 'restaurant' ? '🍽️ Nuestro Menú' : company.type === 'clinic' ? '🦷 Nuestros Tratamientos' : '📦 Nuestros Productos'}:**\n\n`;
+        
+        // Agrupar por categoría
+        const grouped: any = {};
+        config.products.forEach((p: any) => {
+          if (!grouped[p.category]) grouped[p.category] = [];
+          grouped[p.category].push(p);
+        });
+        
+        for (const [category, items] of Object.entries(grouped)) {
+          const categoryName = category.charAt(0).toUpperCase() + category.slice(1);
+          reply += `**${categoryName}:**\n`;
+          (items as any[]).forEach((item: any) => {
+            const price = new Intl.NumberFormat('es-CO', { 
+              style: 'currency', 
+              currency: 'COP', 
+              minimumFractionDigits: 0 
+            }).format(item.price);
+            reply += `  • ${item.name} - ${price}`;
+            if (item.duration) reply += ` ⏱️ ${item.duration} min`;
+            if (item.description) reply += `\n    ${item.description}`;
+            reply += `\n`;
+          });
+          reply += `\n`;
+        }
+        hasContent = true;
+      }
+      
+      // SEGUNDO: Mostrar services SIEMPRE si existen (junto con productos o solos)
+      if (config?.services && Object.keys(config.services).length > 0 && !askingOnlyAboutHours) {
+        if (hasContent) reply += `\n---\n\n`;
+        reply += `🛎️ **Tipos de ${company.type === 'restaurant' ? 'Reserva' : 'Cita'} Disponibles:**\n\n`;
+        
+        Object.entries(config.services).forEach(([key, value]: [string, any]) => {
+          if (value.enabled) {
+            reply += `**${value.name}**\n`;
+            if (value.description) reply += `  ${value.description}\n`;
+            
+            // Información adicional del servicio
+            const details: string[] = [];
+            if (value.minAdvanceHours) {
+              details.push(`⏰ Mínimo ${value.minAdvanceHours} horas de anticipación`);
+            }
+            if (value.minAdvanceMinutes) {
+              const hours = Math.floor(value.minAdvanceMinutes / 60);
+              const mins = value.minAdvanceMinutes % 60;
+              if (hours > 0) {
+                details.push(`⏰ Mínimo ${hours}h ${mins > 0 ? mins + 'min' : ''} de anticipación`);
+              } else {
+                details.push(`⏰ Mínimo ${value.minAdvanceMinutes} minutos de anticipación`);
+              }
+            }
+            if (value.requiresPayment) {
+              details.push(`💳 Requiere pago anticipado`);
+            }
+            if (value.requiresProducts) {
+              details.push(`📋 Requiere seleccionar productos`);
+            }
+            if (value.deliveryFee) {
+              const fee = new Intl.NumberFormat('es-CO', { 
+                style: 'currency', 
+                currency: 'COP', 
+                minimumFractionDigits: 0 
+              }).format(value.deliveryFee);
+              details.push(`🚚 Costo de envío: ${fee}`);
+            }
+            if (value.minOrderAmount) {
+              const minAmount = new Intl.NumberFormat('es-CO', { 
+                style: 'currency', 
+                currency: 'COP', 
+                minimumFractionDigits: 0 
+              }).format(value.minOrderAmount);
+              details.push(`💰 Pedido mínimo: ${minAmount}`);
+            }
+            
+            if (details.length > 0) {
+              reply += details.map(d => `  ${d}`).join('\n') + '\n';
+            }
+            reply += `\n`;
+          }
+        });
+        hasContent = true;
+      }
+      
+      // TERCERO: Agregar horarios SOLO si preguntan explícitamente
+      if (askingOnlyAboutHours) {
+        if (hasContent) reply += `---\n\n`;
+        reply += `🕐 **Horarios de Atención:**\n${hoursText}\n\n`;
+        hasContent = true;
+      }
+      
+      // Si no se generó contenido específico, usar respuesta por defecto
+      if (!hasContent) {
         reply = detection.suggestedReply || await this.messagesTemplates.getReservationQuery(company.type, hoursText);
+      } else {
+        // Agregar pregunta final si generamos contenido
+        reply += `\n¿Te gustaría hacer una ${company.type === 'restaurant' ? 'reserva' : 'cita'}? 😊`;
       }
       
       // NO resetear stage si estamos en medio de una reserva
@@ -361,12 +547,145 @@ export class BotEngineService {
 
     // Actualizar datos recopilados - solo sobrescribir con valores que NO sean null/undefined
     const extracted = detection.extractedData || {};
+    
+    console.log(`🔍 [DEBUG] hasMultipleServices: ${hasMultipleServices}, extracted.service: ${extracted?.service}, dto.message: ${dto.message}`);
+    
+    // FALLBACK: Si hay múltiples servicios pero no se extrajo ninguno, intentar detectar por keywords en el mensaje original
+    if (hasMultipleServices && !extracted.service && dto.message) {
+      const message = dto.message.toLowerCase().trim();
+      console.log(`🔍 [FALLBACK] Intentando detectar servicio del mensaje: "${dto.message}"`);
+      console.log(`🔍 [FALLBACK] extracted.service actual:`, extracted.service);
+      console.log(`🔍 [FALLBACK] Servicios disponibles:`, Object.keys(availableServices));
+      
+      // Generar keywords genéricos para cada servicio basándose en su nombre y key
+      const normalizeForMatching = (text: string) => {
+        return text
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '') // Quitar acentos
+          .toLowerCase()
+          .trim();
+      };
+      
+      const normalizedMessage = normalizeForMatching(message);
+      
+      // Función para generar sinónimos comunes basándose en el nombre del servicio
+      const generateServiceSynonyms = (key: string, serviceName: string): string[] => {
+        const normalizedKey = normalizeForMatching(key);
+        const normalizedName = normalizeForMatching(serviceName);
+        
+        const synonyms: string[] = [
+          normalizedKey, // La key siempre es un sinónimo
+          normalizedName, // El nombre siempre es un sinónimo
+        ];
+        
+        // Extraer palabras clave del nombre del servicio
+        const nameWords = normalizedName.split(/\s+/).filter(w => w.length > 2);
+        synonyms.push(...nameWords);
+        
+        // Sinónimos comunes basados en el nombre
+        if (normalizedName.includes('domicilio') || normalizedKey.includes('domicilio')) {
+          synonyms.push('pedir a domicilio', 'pedido a domicilio', 'delivery', 'envío', 'a domicilio', 'pedir', 'pedido');
+        }
+        if (normalizedName.includes('mesa') || normalizedKey.includes('mesa')) {
+          synonyms.push('reservar mesa', 'mesa en restaurante', 'comer aquí', 'en el restaurante');
+        }
+        if (normalizedName.includes('limpieza') || normalizedKey.includes('limpieza')) {
+          synonyms.push('profilaxis', 'limpieza dental');
+        }
+        if (normalizedName.includes('consulta') || normalizedKey.includes('consulta')) {
+          synonyms.push('revisión', 'cita', 'consulta médica');
+        }
+        if (normalizedName.includes('ortodoncia') || normalizedKey.includes('ortodoncia')) {
+          synonyms.push('brackets', 'aparatos', 'corrección dental');
+        }
+        if (normalizedName.includes('blanqueamiento') || normalizedKey.includes('blanqueamiento')) {
+          synonyms.push('blanquear', 'blanqueamiento dental', 'estética dental');
+        }
+        
+        // Agregar palabras del nombre con artículos comunes
+        nameWords.forEach(word => {
+          synonyms.push(`la ${word}`, `el ${word}`, `una ${word}`, `un ${word}`);
+        });
+        
+        return [...new Set(synonyms)]; // Eliminar duplicados
+      };
+      
+      // Buscar coincidencias para cada servicio (ordenar por especificidad)
+      const serviceMatches: Array<{ key: string; score: number; matchedKeyword: string }> = [];
+      
+      for (const [key, value] of Object.entries(availableServices)) {
+        const serviceName = (value as any)?.name || '';
+        const serviceKeywords = generateServiceSynonyms(key, serviceName);
+        
+        // Buscar coincidencias
+        let bestMatch: { keyword: string; score: number } | null = null;
+        
+        for (const keyword of serviceKeywords) {
+          const normalizedKeyword = normalizeForMatching(keyword);
+          
+          // Coincidencia exacta (mayor puntuación)
+          if (normalizedMessage === normalizedKeyword) {
+            bestMatch = { keyword, score: 10 };
+            break;
+          }
+          
+          // Coincidencia de frase completa
+          if (normalizedMessage.includes(normalizedKeyword) && normalizedKeyword.length > 3) {
+            const score = normalizedKeyword.length; // Frases más largas tienen mayor puntuación
+            if (!bestMatch || score > bestMatch.score) {
+              bestMatch = { keyword, score };
+            }
+          }
+          
+          // Coincidencia de palabra dentro de la frase
+          const messageWords = normalizedMessage.split(/\s+/);
+          const keywordWords = normalizedKeyword.split(/\s+/);
+          
+          if (keywordWords.every(kw => messageWords.some(mw => mw.includes(kw) || kw.includes(mw)))) {
+            const score = normalizedKeyword.length * 0.5; // Menor puntuación para palabras individuales
+            if (!bestMatch || score > bestMatch.score) {
+              bestMatch = { keyword, score };
+            }
+          }
+        }
+        
+        if (bestMatch) {
+          serviceMatches.push({
+            key,
+            score: bestMatch.score,
+            matchedKeyword: bestMatch.keyword,
+          });
+          console.log(`✅ [FALLBACK] Servicio "${key}" coincidió con keyword "${bestMatch.keyword}" (score: ${bestMatch.score})`);
+        }
+      }
+      
+      // Ordenar por puntuación y tomar el mejor
+      if (serviceMatches.length > 0) {
+        serviceMatches.sort((a, b) => b.score - a.score);
+        const bestMatch = serviceMatches[0];
+        extracted.service = bestMatch.key;
+        console.log(`✅ [FALLBACK] Servicio detectado: "${bestMatch.key}" del mensaje: "${dto.message}" (matched: "${bestMatch.matchedKeyword}")`);
+      } else {
+        console.log(`⚠️ [FALLBACK] No se pudo detectar servicio del mensaje: "${dto.message}"`);
+        console.log(`⚠️ [FALLBACK] Mensaje procesado: "${normalizedMessage}"`);
+      }
+    }
+    
+    // Agregar el servicio detectado por fallback si existe
+    if (extracted.service) {
+      console.log(`✅ [DEBUG] Servicio detectado en extracted.service: "${extracted.service}"`);
+    }
+    
     const collected = {
       ...context.collectedData,
       ...Object.fromEntries(
         Object.entries(extracted).filter(([_, value]) => value !== null && value !== undefined)
       ),
     };
+    
+    // Log final para debug
+    console.log(`✅ [DEBUG] collected.service final: "${collected.service}"`);
+    console.log(`✅ [DEBUG] collected object:`, JSON.stringify(collected, null, 2));
 
     // Identificar qué datos NUEVOS se recibieron en este mensaje
     const newData: any = {};
@@ -389,6 +708,12 @@ export class BotEngineService {
     }
     
     const missing = required.filter((f) => !collected[f]);
+    
+    // Si el servicio fue detectado por fallback, asegurar que no esté en missing
+    if (collected.service && missing.includes('service')) {
+      missing.splice(missing.indexOf('service'), 1);
+      console.log(`✅ [FALLBACK] Servicio "${collected.service}" detectado y removido de missingFields`);
+    }
     
     // Validar que el servicio seleccionado existe
     if (collected.service && hasMultipleServices && !availableServices[collected.service]) {
@@ -550,6 +875,105 @@ export class BotEngineService {
     }
 
     return formattedSlots.join('. ');
+  }
+
+  private async handleCancellation(
+    dto: ProcessMessageDto,
+    context: any,
+    company: any,
+  ): Promise<string> {
+    try {
+      // Importar DateHelper una sola vez al inicio
+      const { DateHelper } = await import('../common/date-helper');
+      
+      // VALIDACIÓN 1: Verificar que el usuario existe
+      if (!dto.userId) {
+        return 'No puedo identificar tu usuario. Por favor proporciona tu información de contacto.';
+      }
+
+      // Buscar reservas del usuario en esta empresa
+      const userReservations = await this.reservations.findByUserAndCompany(
+        dto.userId,
+        dto.companyId,
+      );
+
+      // VALIDACIÓN 2: Filtrar solo reservas FUTURAS y activas (no canceladas, no pasadas)
+      const today = DateHelper.getTodayString();
+      const now = DateHelper.getNow();
+      const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+      
+      const activeReservations = userReservations.filter(
+        (r) => r.status !== 'cancelled' && 
+               (r.date > today || (r.date === today && r.time > currentTime))
+      );
+
+      if (activeReservations.length === 0) {
+        return `No tienes reservas futuras activas para cancelar en ${company.name}.`;
+      }
+
+      // Si solo hay una reserva, PEDIR CONFIRMACIÓN primero
+      if (activeReservations.length === 1) {
+        const reservation = activeReservations[0];
+        const fechaFormateada = DateHelper.formatDateReadable(reservation.date);
+        
+        // VALIDACIÓN 3: Verificar si el mensaje confirma la cancelación
+        const lowerMsg = dto.message.toLowerCase();
+        const confirmsCancel = lowerMsg.includes('sí') || 
+                              lowerMsg.includes('si') ||
+                              lowerMsg.includes('confirmo') ||
+                              lowerMsg.includes('seguro') ||
+                              lowerMsg.includes('adelante') ||
+                              (context.pendingCancellation === reservation.id);
+        
+        if (!confirmsCancel && !context.pendingCancellation) {
+          // Guardar en contexto que hay cancelación pendiente
+          context.pendingCancellation = reservation.id;
+          await this.conversations.saveContext(dto.userId, dto.companyId, context);
+          
+          return `⚠️ ¿Estás seguro que deseas cancelar tu ${company.type === 'restaurant' ? 'reserva' : 'cita'} del ${fechaFormateada} a las ${reservation.time}?\n\nResponde "sí" para confirmar la cancelación.`;
+        }
+        
+        // Proceder con la cancelación
+        await this.reservations.update(reservation.id, { status: 'cancelled' });
+        delete context.pendingCancellation;
+        await this.conversations.saveContext(dto.userId, dto.companyId, context);
+        
+        return `✅ Tu ${company.type === 'restaurant' ? 'reserva' : 'cita'} del ${fechaFormateada} a las ${reservation.time} ha sido cancelada exitosamente.\n\nSi cambias de opinión, puedes hacer una nueva reserva cuando quieras. 😊`;
+      }
+
+      // Si hay múltiples reservas, listarlas y pedir confirmación
+      const reservationsList = activeReservations
+        .slice(0, 5) // Mostrar máximo 5
+        .map((r, index) => {
+          const fechaFormateada = DateHelper.formatDateReadable(r.date);
+          return `${index + 1}. ${fechaFormateada} a las ${r.time}${r.service ? ` - ${r.service}` : ''}`;
+        })
+        .join('\n');
+
+      // Intentar extraer número o fecha del mensaje
+      const lowerMessage = dto.message.toLowerCase();
+      const dateMatches = lowerMessage.match(/(mañana|hoy|ayer|el \d+|para el \d+)/);
+      const numberMatch = lowerMessage.match(/\d+/);
+
+      if (numberMatch) {
+        // Si mencionó un número, intentar cancelar esa reserva
+        const index = parseInt(numberMatch[0]) - 1;
+        if (index >= 0 && index < activeReservations.length) {
+          const reservation = activeReservations[index];
+          await this.reservations.update(reservation.id, { status: 'cancelled' });
+          
+          const fechaFormateada = DateHelper.formatDateReadable(reservation.date);
+          
+          return `✅ Tu ${company.type === 'restaurant' ? 'reserva' : 'cita'} del ${fechaFormateada} a las ${reservation.time} ha sido cancelada exitosamente.`;
+        }
+      }
+
+      // Si no pudo identificar cuál cancelar, listar opciones
+      return `Tienes ${activeReservations.length} ${company.type === 'restaurant' ? 'reservas' : 'citas'} activas:\n\n${reservationsList}\n\nPor favor indica cuál deseas cancelar (número o fecha específica).`;
+    } catch (error) {
+      console.error('Error en handleCancellation:', error);
+      return await this.messagesTemplates.getReservationCancel(company.type);
+    }
   }
 }
 
