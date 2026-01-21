@@ -18,10 +18,34 @@ export class QueryHandler implements IIntentionHandler {
     const config = company.config as any;
     const hoursText = this.formatHours(config?.hours);
     
-    // Si preguntan por servicios y hay servicios configurados, mostrarlos
+    // PRIORIDAD 1: Si OpenAI generó un suggestedReply con contexto relevante, usarlo
+    // OpenAI ya analizó pagos pendientes, reservas activas, historial completo
+    if (detection.suggestedReply && 
+        (detection.suggestedReply.length > 50 || // Respuesta detallada de OpenAI
+         detection.confidence >= 0.8 || // Alta confianza
+         conversationContext.conversationHistory?.length > 0)) { // Hay historial
+      // Verificar si el suggestedReply parece contextualizado (no es genérico)
+      const isContextualized = detection.suggestedReply.includes('pago') || 
+                               detection.suggestedReply.includes('reserva') ||
+                               detection.suggestedReply.includes('anticipo') ||
+                               detection.suggestedReply.includes('link') ||
+                               detection.suggestedReply.length > 80;
+      
+      if (isContextualized) {
+        return {
+          reply: detection.suggestedReply,
+          newState: {
+            ...conversationContext,
+            stage: conversationContext.stage !== 'collecting' ? ('idle' as const) : conversationContext.stage,
+          },
+        };
+      }
+    }
+    
+    // PRIORIDAD 2: Si preguntan por servicios y hay servicios configurados, mostrarlos
     const askingAboutServices = this.keywordDetector.asksForProducts(dto.message);
     
-    // Verificar si la consulta incluye fecha/hora específica (consulta de disponibilidad)
+    // PRIORIDAD 3: Verificar si la consulta incluye fecha/hora específica (consulta de disponibilidad)
     const extracted = detection.extractedData || {};
     const hasSpecificDate = extracted.date !== null && extracted.date !== undefined;
     const hasSpecificTime = extracted.time !== null && extracted.time !== undefined;
@@ -53,6 +77,7 @@ export class QueryHandler implements IIntentionHandler {
         .join('\n');
       reply = `Ofrecemos los siguientes servicios:\n\n${servicesList}\n\n¿Te gustaría agendar una cita?`;
     } else {
+      // Fallback: usar suggestedReply de OpenAI o respuesta genérica
       reply = detection.suggestedReply || await this.messagesTemplates.getReservationQuery(company.type, hoursText);
     }
     

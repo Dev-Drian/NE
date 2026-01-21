@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { CompaniesService } from '../../companies/companies.service';
 import { ConversationsService } from '../../conversations/conversations.service';
 import { DateUtilsService } from '../utils/date-utils.service';
@@ -6,6 +6,8 @@ import { ContextCacheService } from '../utils/context-cache.service';
 import { CircuitBreakerService } from '../utils/circuit-breaker.service';
 import { Layer2SimilarityService } from './layer2-similarity.service';
 import { DetectionResult } from '../dto/detection-result.dto';
+import { PaymentsService } from '../../payments/payments.service';
+import { ReservationsService } from '../../reservations/reservations.service';
 import OpenAI from 'openai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
@@ -25,6 +27,10 @@ export class Layer3OpenAIService {
     private contextCache: ContextCacheService,
     private circuitBreaker: CircuitBreakerService,
     private layer2: Layer2SimilarityService,
+    @Inject(forwardRef(() => PaymentsService))
+    private paymentsService: PaymentsService,
+    @Inject(forwardRef(() => ReservationsService))
+    private reservationsService: ReservationsService,
   ) {
     const openaiKey = process.env.OPENAI_API_KEY;
     const geminiKey = process.env.GEMINI_API_KEY;
@@ -74,6 +80,59 @@ export class Layer3OpenAIService {
       .slice(-15)
       .map((msg) => `${msg.role === 'user' ? 'Cliente' : 'Asistente'}: ${msg.content}`)
       .join('\n');
+
+    // Obtener información contextual: pagos pendientes y reservas recientes
+    let contextualInfo = '';
+    try {
+      const conversationId = await this.conversationsService.findOrCreateConversation(userId, companyId);
+      const pendingPayment = await this.paymentsService.getPendingPayment(conversationId);
+      const recentReservations = await this.reservationsService.findByUserAndCompany(userId, companyId);
+      const activeReservations = recentReservations
+        .filter(r => r.status === 'pending' || r.status === 'confirmed')
+        .slice(0, 3); // Solo las 3 más recientes
+
+      if (pendingPayment) {
+        const amount = new Intl.NumberFormat('es-CO', { 
+          style: 'currency', 
+          currency: 'COP', 
+          minimumFractionDigits: 0 
+        }).format(pendingPayment.amount);
+        
+        contextualInfo += `\n\n**⚠️ PAGO PENDIENTE:**
+- Monto: ${amount}
+- Link de pago: ${pendingPayment.paymentUrl || 'No disponible'}
+- IMPORTANTE: Si el usuario dice "ok", "vale", "ya pagué", "apague", "apagar", "pagado", etc., está probablemente refiriéndose a este pago. Debes dar una respuesta coherente sobre el estado del pago o confirmar si ya pagó.`;
+      }
+
+      if (activeReservations.length > 0) {
+        // Formatear fechas de manera legible
+        const { DateHelper } = await import('../../common/date-helper');
+        
+        const reservationsText = activeReservations.map((r, idx) => {
+          try {
+            const dateReadable = DateHelper.formatDateReadable(r.date);
+            const serviceName = r.service || 'Servicio';
+            const statusText = r.status === 'pending' ? 'Pendiente de pago' : 
+                              r.status === 'confirmed' ? 'Confirmada' : r.status;
+            return `${idx + 1}. ${serviceName} - ${dateReadable} a las ${r.time} (Estado: ${statusText})`;
+          } catch {
+            // Fallback si hay error formateando la fecha
+            const serviceName = r.service || 'Servicio';
+            const statusText = r.status === 'pending' ? 'Pendiente de pago' : 
+                              r.status === 'confirmed' ? 'Confirmada' : r.status;
+            return `${idx + 1}. ${serviceName} - ${r.date} a las ${r.time} (Estado: ${statusText})`;
+          }
+        });
+        
+        contextualInfo += `\n\n**📅 RESERVAS ACTIVAS DEL CLIENTE:**
+${reservationsText.join('\n')}
+- IMPORTANTE: Si el usuario pregunta sobre su reserva, cita, agendamiento, o dice "mi reserva", "mi cita", está refiriéndose a una de estas reservas. 
+- Si el usuario intenta hacer una nueva reserva para la misma fecha/hora, debes informarle que ya tiene una reserva existente y preguntarle si quiere modificar o cancelar la existente.
+- Si el usuario pregunta sobre el estado de su reserva, proporciona los detalles específicos de la reserva más reciente.`;
+      }
+    } catch (error) {
+      this.logger.warn('Error obteniendo información contextual:', error);
+    }
 
     // Información del estado actual y contexto previo mejorado
     let currentStateInfo = '';
@@ -165,7 +224,7 @@ Contexto: Cliente de ${company.name} (tipo: ${company.type})
 Mensaje: "${message}"${servicesInfo}${productsInfo}
 
 ${conversationHistory ? `Conversación previa:\n${conversationHistory}\n` : ''}
-${currentStateInfo}
+${currentStateInfo}${contextualInfo}
 
 INSTRUCCIONES CRÍTICAS:
 
@@ -192,11 +251,17 @@ INSTRUCCIONES CRÍTICAS:
    ${hasMultipleServices ? '⚠️ SERVICIO (MUY IMPORTANTE - OBLIGATORIO): Debes SIEMPRE extraer el servicio mencionado usando la KEY exacta de la lista de SERVICIOS DISPONIBLES arriba. Busca cualquier mención del servicio en el mensaje del usuario:\n   - Si el usuario dice "pedir a domicilio", "domicilio", "delivery", "a domicilio", "envío", "pedido a domicilio", "quiero un domicilio", "necesito un domicilio", "un domicilio", "que me lo traigan", "que me lo lleven" → service: "domicilio"\n   - Si el usuario dice "mesa", "restaurante", "comer aquí", "en el restaurante", "reservar mesa", "para llevar", "pedir para llevar", "llevar", "take away", "recoger", "pasar a recoger" → service: "mesa"\n   - Si el usuario dice "NO quiero que me lo traigan", "NO quiero domicilio", "no quiero que me la traigan" → service: "mesa" (cambiar de domicilio a mesa)\n   - Si el usuario dice variantes de "limpieza" o "consulta" → busca la key correspondiente\n   - ATENCIÓN: "pedir para llevar" o "para llevar" significa recoger en el restaurante → service: "mesa" (NO "domicilio")\n   - SIEMPRE busca coincidencias con las keys y sinónimos listados en SERVICIOS DISPONIBLES\n   - NO dejes service: null si hay cualquier mención de un servicio en el mensaje' : ''}
    PERSONAS/COMENSALES: ${isClinicType ? 'NO extraer - las clínicas y spas NO necesitan número de personas (siempre es 1)' : '"para 2", "somos 4", "2 personas" → guests: número'}
 
-2. DETECTAR INTENCIÓN:
+2. DETECTAR INTENCIÓN (ANALIZA EL CONTEXTO COMPLETO):
    - "reservar": El usuario QUIERE hacer una reserva (verbos: quiero, necesito, quisiera, agendar)
-   - "consultar": Solo pregunta sin intención de reservar
+   - "consultar": Solo pregunta sin intención de reservar, O está respondiendo sobre pagos/reservas existentes
    - "cancelar": Quiere cancelar
    - "otro": Otros casos
+   
+   IMPORTANTE: Si hay un PAGO PENDIENTE y el usuario dice "ok", "vale", "ya pagué", "apague", etc., 
+   la intención debe ser "consultar" y debes dar una respuesta coherente sobre el pago.
+   
+   Si hay RESERVAS ACTIVAS y el usuario pregunta sobre ellas o menciona "mi reserva", "mi cita", etc.,
+   la intención debe ser "consultar" y debes responder sobre la reserva.
 
 3. missingFields: ${isClinicType 
   ? `Para clínicas/spas, los campos REQUERIDOS son: fecha, hora, teléfono${hasMultipleServices ? ', servicio' : ''} (NO incluir comensales/guests)` 
@@ -215,7 +280,7 @@ Responde SOLO con este JSON:
     "name": "string o null"${hasMultipleServices ? ',\n    "service": "key_del_servicio o null"' : ''}
   },
   "missingFields": ["campo1", "campo2"] o [],
-  "suggestedReply": "texto breve para responder"
+  "suggestedReply": "texto contextualizado y ESPECÍFICO para responder basado en el contexto completo. DEBES SER ESPECÍFICO:\n- Si hay pago pendiente y el usuario dice 'ok', 'vale', 'ya pagué', 'apague', etc.: confirma el estado del pago, proporciona el link si está disponible, o pregunta si necesita ayuda.\n- Si hay reservas activas y el usuario pregunta sobre ellas: menciona los detalles ESPECÍFICOS (fecha, hora, servicio, estado) de la reserva más reciente.\n- Si el usuario intenta reservar una fecha/hora que ya tiene reservada: informa específicamente que ya tiene una reserva para esa fecha/hora y pregunta si quiere modificar o cancelar.\n- NO uses respuestas genéricas como 'Ya tienes una reserva confirmada' sin dar detalles. SIEMPRE incluye información específica (fecha, hora, servicio, estado del pago si aplica)."
 }`;
 
     try {

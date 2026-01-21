@@ -13,6 +13,7 @@ const KEYWORD_CATEGORIES = {
   price: ['cuanto cuesta', 'precio de', 'precio del', 'cuanto vale', 'costo de', 'costo del'],
   reservar: ['reservar', 'reserva', 'cita', 'agendar', 'quiero', 'necesito', 'deseo'],
   cancelar: ['cancelar', 'cancelar mi reserva', 'cancelar reserva'],
+  payment: ['pago', 'pagar', 'apague', 'apagar', 'pagado', 'pagaste', 'pagamos', 'pague', 'pague ya', 'ya pague', 'falta pagar', 'debo pagar', 'link de pago', 'link pago', 'pago pendiente', 'pago falta'],
 };
 
 /**
@@ -105,6 +106,13 @@ export class KeywordDetectorService {
   }
 
   /**
+   * Detecta si el mensaje menciona términos relacionados con pago
+   */
+  mentionsPayment(message: string): boolean {
+    return this.textUtils.containsAnyKeyword(message, KEYWORD_CATEGORIES.payment);
+  }
+
+  /**
    * Obtiene todas las categorías detectadas en el mensaje
    */
   detectAllCategories(message: string): string[] {
@@ -117,6 +125,7 @@ export class KeywordDetectorService {
     if (this.asksForPrice(message)) categories.push('price');
     if (this.mentionsReservation(message)) categories.push('reservar');
     if (this.mentionsCancel(message)) categories.push('cancelar');
+    if (this.mentionsPayment(message)) categories.push('payment');
     
     return categories;
   }

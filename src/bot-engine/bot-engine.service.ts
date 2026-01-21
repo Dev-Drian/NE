@@ -301,23 +301,37 @@ export class BotEngineService {
         if (layer3Detection.suggestedReply) {
           detection.suggestedReply = layer3Detection.suggestedReply;
         }
-      } else if (detection.confidence < CONFIDENCE_THRESHOLDS.MEDIUM || detection.intention === 'consultar') {
-        // Si aún no hay confianza suficiente O es una consulta → CAPA 3 (OpenAI)
-        // Para consultas, usar OpenAI para extraer fecha/hora si están presentes
-        // Optimización: No llamar OpenAI si ya tenemos alta confianza (>= 0.85) y no es reserva/consulta
-        const layer3Detection = await this.layer3.detect(dto.message, dto.companyId, userId);
-        if (layer3Detection.confidence > detection.confidence || detection.intention === 'consultar') {
-          // Mantener intención "consultar" pero usar datos extraídos de OpenAI
-          if (detection.intention === 'consultar') {
+      } else {
+        // SIEMPRE usar OpenAI para mensajes con contexto relevante o baja confianza
+        // Verificar si hay contexto relevante (pagos pendientes, reservas, historial)
+        const hasRelevantContext = 
+          context.stage === 'completed' ||
+          context.conversationHistory?.length > 0 ||
+          dto.message.trim().length <= 15; // Mensajes cortos pueden necesitar contexto
+        
+        if (detection.confidence < CONFIDENCE_THRESHOLDS.MEDIUM || 
+            detection.intention === 'consultar' || 
+            detection.intention === 'otro' ||
+            hasRelevantContext) {
+          // Usar OpenAI para análisis contextual completo
+          const layer3Detection = await this.layer3.detect(dto.message, dto.companyId, userId);
+          
+          // Priorizar la detección de OpenAI si tiene mejor confianza o si hay contexto relevante
+          if (layer3Detection.confidence > detection.confidence || 
+              hasRelevantContext ||
+              detection.intention === 'otro') {
+            detection = layer3Detection;
+          } else if (detection.intention === 'consultar') {
+            // Mantener intención "consultar" pero usar datos extraídos de OpenAI
             detection.intention = 'consultar';
             detection.confidence = Math.max(detection.confidence, layer3Detection.confidence);
             detection.extractedData = layer3Detection.extractedData;
-          } else if (layer3Detection.confidence > detection.confidence) {
-            detection = layer3Detection;
+            if (layer3Detection.suggestedReply) {
+              detection.suggestedReply = layer3Detection.suggestedReply;
+            }
           }
         }
       }
-      // Si confidence >= HIGH (0.85) y no es reservar/consultar, no llamar OpenAI (optimización)
     }
 
     // 7. Si se detectó un teléfono en los datos extraídos, crear/actualizar usuario
@@ -370,7 +384,8 @@ export class BotEngineService {
       reply = result.reply;
       newState = result.newState;
     } else {
-      // Fallback para otras intenciones
+      // Fallback para otras intenciones - Usar suggestedReply de OpenAI que ya tiene contexto
+      // OpenAI ya analizó el contexto completo (pagos, reservas, historial) y generó una respuesta coherente
       reply = detection.suggestedReply || await this.messagesTemplates.getError(company.type);
       newState.stage = 'idle';
     }
