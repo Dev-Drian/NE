@@ -126,7 +126,14 @@ export class MessagesTemplatesService {
       // Pedir datos faltantes
       if (missingFields.length > 0) {
         if (missingFields.length === 1) {
-          parts.push(`\n\nSolo me falta tu ${missingFields[0]} para confirmar la ${terminology.reservation}.`);
+          // Corregir "tu personas" a "el número de personas" o "comensales"
+          const fieldLabel = missingFields[0];
+          const fieldText = fieldLabel === 'personas' || fieldLabel === terminology.people 
+            ? `el número de ${terminology.people}` 
+            : fieldLabel === 'comensales'
+            ? 'comensales'
+            : `tu ${fieldLabel}`;
+          parts.push(`\n\nSolo me falta ${fieldText} para confirmar la ${terminology.reservation}.`);
         } else {
           parts.push(`\n\nAhora necesito: ${missingFields.join(', ')}.`);
         }

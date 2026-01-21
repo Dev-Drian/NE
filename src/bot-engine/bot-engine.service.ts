@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Layer1KeywordsService } from './layers/layer1-keywords.service';
 import { Layer2SimilarityService } from './layers/layer2-similarity.service';
 import { Layer3OpenAIService } from './layers/layer3-openai.service';
@@ -8,6 +8,11 @@ import { AvailabilityService } from '../availability/availability.service';
 import { MessagesTemplatesService } from '../messages-templates/messages-templates.service';
 import { CompaniesService } from '../companies/companies.service';
 import { UsersService } from '../users/users.service';
+import { PaymentsService } from '../payments/payments.service';
+import { KeywordsService } from '../keywords/keywords.service';
+import { TextUtilsService } from './utils/text-utils.service';
+import { ContextCacheService } from './utils/context-cache.service';
+import { KeywordDetectorService } from './utils/keyword-detector.service';
 import { ProcessMessageDto } from './dto/process-message.dto';
 import { DetectionResult } from './dto/detection-result.dto';
 
@@ -22,6 +27,8 @@ export interface ProcessMessageResponse {
 
 @Injectable()
 export class BotEngineService {
+  private readonly logger = new Logger(BotEngineService.name);
+
   constructor(
     private layer1: Layer1KeywordsService,
     private layer2: Layer2SimilarityService,
@@ -32,106 +39,79 @@ export class BotEngineService {
     private messagesTemplates: MessagesTemplatesService,
     private companies: CompaniesService,
     private usersService: UsersService,
+    private paymentsService: PaymentsService,
+    private keywordsService: KeywordsService,
+    private textUtils: TextUtilsService,
+    private contextCache: ContextCacheService,
+    private keywordDetector: KeywordDetectorService,
   ) {}
 
   async processMessage(dto: ProcessMessageDto): Promise<ProcessMessageResponse> {
-    // 1. VALIDAR QUE LA EMPRESA EXISTE (CRÍTICO - HACER PRIMERO)
-    const company = await this.companies.findOne(dto.companyId);
-    if (!company) {
-      return {
-        reply: 'Lo siento, la empresa que buscas no existe o no está disponible en este momento. Por favor verifica el ID de la empresa.',
-        intention: 'otro',
-        confidence: 0,
-        conversationState: 'idle',
-      };
-    }
+    try {
+      // 1. VALIDAR QUE LA EMPRESA EXISTE (CRÍTICO - HACER PRIMERO)
+      // Usar cache para evitar consultas redundantes
+      const company = await this.contextCache.getOrLoadCompany(
+        dto.companyId,
+        () => this.companies.findOne(dto.companyId)
+      );
 
-    // 2. Si hay teléfono en los datos extraídos y no coincide con el usuario, actualizar
-    // Esto permite actualizar el teléfono del usuario si se proporciona en el mensaje
-    let userId = dto.userId;
-    if (dto.phone) {
-      // Verificar si el usuario tiene el teléfono correcto
-      const user = await this.usersService.findOne(userId);
-      if (user && user.phone !== dto.phone) {
-        // Actualizar teléfono del usuario si cambió
-        await this.usersService.update(userId, { phone: dto.phone });
+      if (!company) {
+        return {
+          reply: 'Lo siento, la empresa que buscas no existe o no está disponible en este momento. Por favor verifica el ID de la empresa.',
+          intention: 'otro',
+          confidence: 0,
+          conversationState: 'idle',
+        };
       }
-    }
 
-    // 3. Cargar contexto desde Redis
-    const context = await this.conversations.getContext(userId, dto.companyId);
-
-    // 4. Agregar mensaje del usuario al historial
-    await this.conversations.addMessage(userId, dto.companyId, 'user', dto.message);
-
-    // 5. LÓGICA CONTEXTUAL: Si estamos en modo "collecting" con intención "reservar"
-    // debemos forzar la continuidad de la reserva, PERO solo si el mensaje no es un saludo
-    const isContinuingReservation = 
-      context.stage === 'collecting' && context.lastIntention === 'reservar';
-    
-    // Detectar primero si es un saludo (tiene máxima prioridad y resetea el contexto)
-    const greetingKeywords = ['hola', 'buenos días', 'buenas tardes', 'buenas noches', 'hey', 'hi'];
-    const lowerMessage = dto.message.toLowerCase();
-    
-    // Normalizar caracteres para mejor matching (quitar acentos)
-    const normalizeText = (text: string) => {
-      return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-    };
-    const normalizedMessage = normalizeText(lowerMessage);
-    
-    const isGreeting = greetingKeywords.some(keyword => 
-      normalizedMessage.includes(normalizeText(keyword))
-    );
-    
-    // Detectar si pregunta por productos/menú/servicios (PRIORIDAD ALTA)
-    // MEJORADO: Incluir todas las variantes de "servicios", "tratamientos", "menú"
-    const productKeywords = [
-      'menu', 'menú', 'carta', 'productos', 'tratamientos', 
-      'servicios', 'servicio', 'qué tienen', 'que tienen', 
-      'qué ofrecen', 'que ofrecen', 'qué hay', 'que hay',
-      'opciones', 'catalogo', 'catálogo', 'lista de',
-      'que servicios', 'qué servicios', 'cuales servicios', 'cuáles servicios',
-      'cuales son los servicios', 'cuáles son los servicios',
-      'que tratamientos', 'qué tratamientos', 'cuales tratamientos',
-      'que productos', 'qué productos', 'cuales productos',
-      'cuales son', 'cuáles son', 'que venden', 'qué venden',
-      'cuales son los', 'cuáles son los'
-    ];
-    // Normalizar también el mensaje sin acentos para mejor matching
-    // También normalizar las keywords para hacer match sin importar acentos
-    const asksForProducts = productKeywords.some(keyword => {
-      const normalizedKeyword = normalizeText(keyword);
-      const matches = normalizedMessage.includes(normalizedKeyword) || lowerMessage.includes(keyword);
-      if (matches) {
-        console.log(`🔍 [PRODUCTOS] Keyword detectada: "${keyword}" en mensaje: "${dto.message}"`);
+      // 2. Si hay teléfono en los datos extraídos y no coincide con el usuario, actualizar
+      // Esto permite actualizar el teléfono del usuario si se proporciona en el mensaje
+      let userId = dto.userId;
+      if (dto.phone) {
+        // Verificar si el usuario tiene el teléfono correcto
+        const user = await this.usersService.findOne(userId);
+        if (user && user.phone !== dto.phone) {
+          // Actualizar teléfono del usuario si cambió
+          await this.usersService.update(userId, { phone: dto.phone });
+        }
       }
-      return matches;
-    });
-    console.log(`🔍 [PRODUCTOS] asksForProducts: ${asksForProducts}, isContinuingReservation: ${isContinuingReservation}`);
-    
-    // Detectar si hay palabras de consulta específicas de horarios/info general (EXCLUIR consultas de productos)
-    const consultaKeywords = [
-      'horario', 'horarios', 'abren', 'cierran', 'atencion', 'que dias', 
-      'cual es el horario', 'cuando abren', 'direccion', 'ubicacion', 'donde estan',
-      'horario disponible', 'horarios disponibles', 'cuales el horario', 'cuáles el horario',
-      'que horario', 'qué horario', 'que horarios', 'qué horarios'
-    ];
-    const hasConsultaKeywords = consultaKeywords.some(keyword => 
-      normalizedMessage.includes(keyword)
-    ) && !asksForProducts; // NO activar si pregunta por productos
 
-    // Si pregunta por precio específico de un producto
-    const priceQuestions = ['cuanto cuesta', 'precio de', 'precio del', 'cuanto vale', 'costo de', 'costo del'];
-    const asksForPrice = priceQuestions.some(keyword => normalizedMessage.includes(keyword));
+      // 3. Cargar contexto desde Redis (con cache)
+      const contextKey = `${userId}:${dto.companyId}`;
+      const context = await this.contextCache.getOrLoadContext(
+        contextKey,
+        () => this.conversations.getContext(userId, dto.companyId)
+      );
+
+      // 4. Agregar mensaje del usuario al historial
+      await this.conversations.addMessage(userId, dto.companyId, 'user', dto.message);
+      
+      // Invalidar cache de contexto después de agregar mensaje
+      this.contextCache.invalidateContext(contextKey);
+
+      // 5. LÓGICA CONTEXTUAL: Si estamos en modo "collecting" con intención "reservar"
+      // debemos forzar la continuidad de la reserva, PERO solo si el mensaje no es un saludo
+      const isContinuingReservation = 
+        context.stage === 'collecting' && context.lastIntention === 'reservar';
+      
+      // Usar KeywordDetectorService para detecciones (centralizado, sin duplicación)
+      const lowerMessage = dto.message.toLowerCase();
+      const isGreeting = this.keywordDetector.isGreeting(dto.message);
+      const asksForProducts = this.keywordDetector.asksForProducts(dto.message);
+      const asksParaLlevar = this.keywordDetector.asksParaLlevar(dto.message);
+      const hasConsultaKeywords = this.keywordDetector.hasConsultaKeywords(dto.message) && !asksForProducts;
+      const asksForPrice = this.keywordDetector.asksForPrice(dto.message);
     
     if (asksForPrice && !isContinuingReservation) {
       const config = company.config as any;
       const products = config?.products || [];
       
-      // Buscar el producto mencionado
-      const foundProduct = products.find((p: any) => 
-        lowerMessage.includes(p.name.toLowerCase())
-      );
+      // Buscar el producto mencionado (usar normalizeText del servicio)
+      const normalizedMessage = this.textUtils.normalizeText(lowerMessage);
+      const foundProduct = products.find((p: any) => {
+        const productName = this.textUtils.normalizeText(p.name || '');
+        return normalizedMessage.includes(productName);
+      });
       
       if (foundProduct) {
         const price = new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0 }).format(foundProduct.price);
@@ -169,134 +149,101 @@ export class BotEngineService {
       }
     }
     
-    // Si pregunta por productos/servicios, mostrar TODO bien formateado
-    // PRIORIDAD MÁXIMA: Si pregunta por productos/servicios, mostrar directamente sin pasar por detección
-    // PERMITIR incluso si está en proceso de reserva, porque el usuario puede querer ver servicios
+    // Si pregunta por productos, mostrar lista (incluso si está en proceso de reserva)
+    // Esto es importante cuando el servicio requiere productos y el usuario pregunta qué hay disponible
     if (asksForProducts) {
-      console.log(`🔍 [PRODUCTOS] Mostrando productos/servicios directamente (isContinuingReservation: ${isContinuingReservation})`);
       const config = company.config as any;
       const products = config?.products || [];
-      const services = config?.services || {};
       
-      if (products.length > 0 || Object.keys(services).length > 0) {
-        let reply = '';
+      if (products.length > 0) {
+        let reply = `📋 **${company.type === 'restaurant' ? 'Nuestro Menú' : 'Nuestros Servicios'}:**\n\n`;
         
-        // 1. Mostrar PRODUCTOS/TRATAMIENTOS/MENÚ primero
-        if (products.length > 0) {
-          reply += `📋 **${company.type === 'restaurant' ? '🍽️ Nuestro Menú' : company.type === 'clinic' ? '🦷 Nuestros Tratamientos' : '📦 Nuestros Productos'}:**\n\n`;
-          
-          // Agrupar por categoría
-          const grouped: any = {};
-          products.forEach((p: any) => {
-            if (!grouped[p.category]) grouped[p.category] = [];
-            grouped[p.category].push(p);
-          });
-          
-          for (const [category, items] of Object.entries(grouped)) {
-            const categoryName = category.charAt(0).toUpperCase() + category.slice(1);
-            reply += `**${categoryName}:**\n`;
-            (items as any[]).forEach((item: any) => {
-              const price = new Intl.NumberFormat('es-CO', { 
-                style: 'currency', 
-                currency: 'COP', 
-                minimumFractionDigits: 0 
-              }).format(item.price);
-              reply += `  • ${item.name} - ${price}`;
-              if (item.duration) reply += ` ⏱️ ${item.duration} min`;
-              if (item.description) reply += `\n    ${item.description}`;
-              reply += `\n`;
-            });
+        // Agrupar por categoría
+        const grouped: any = {};
+        products.forEach((p: any) => {
+          if (!grouped[p.category]) grouped[p.category] = [];
+          grouped[p.category].push(p);
+        });
+        
+        for (const [category, items] of Object.entries(grouped)) {
+          reply += `**${category.charAt(0).toUpperCase() + category.slice(1)}**\n`;
+          (items as any[]).forEach((item: any) => {
+            const price = new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0 }).format(item.price);
+            reply += `• ${item.name} - ${price}`;
+            if (item.duration) reply += ` (${item.duration} min)`;
+            if (item.description) reply += ` - ${item.description}`;
             reply += `\n`;
-          }
-        }
-        
-        // 2. Mostrar SERVICIOS después (si existen)
-        if (Object.keys(services).length > 0) {
-          if (products.length > 0) {
-            reply += `\n---\n\n`;
-          }
-          reply += `🛎️ **Tipos de ${company.type === 'restaurant' ? 'Reserva' : 'Cita'} Disponibles:**\n\n`;
-          
-          Object.entries(services).forEach(([key, value]: [string, any]) => {
-            if (value.enabled) {
-              reply += `**${value.name}**\n`;
-              if (value.description) reply += `  ${value.description}\n`;
-              
-              // Información adicional del servicio
-              const details: string[] = [];
-              if (value.minAdvanceHours) {
-                details.push(`⏰ Mínimo ${value.minAdvanceHours} horas de anticipación`);
-              }
-              if (value.minAdvanceMinutes) {
-                const hours = Math.floor(value.minAdvanceMinutes / 60);
-                const mins = value.minAdvanceMinutes % 60;
-                if (hours > 0) {
-                  details.push(`⏰ Mínimo ${hours}h ${mins > 0 ? mins + 'min' : ''} de anticipación`);
-                } else {
-                  details.push(`⏰ Mínimo ${value.minAdvanceMinutes} minutos de anticipación`);
-                }
-              }
-              if (value.requiresPayment) {
-                details.push(`💳 Requiere pago anticipado`);
-              }
-              if (value.requiresProducts) {
-                details.push(`📋 Requiere seleccionar productos`);
-              }
-              if (value.deliveryFee) {
-                const fee = new Intl.NumberFormat('es-CO', { 
-                  style: 'currency', 
-                  currency: 'COP', 
-                  minimumFractionDigits: 0 
-                }).format(value.deliveryFee);
-                details.push(`🚚 Costo de envío: ${fee}`);
-              }
-              if (value.minOrderAmount) {
-                const minAmount = new Intl.NumberFormat('es-CO', { 
-                  style: 'currency', 
-                  currency: 'COP', 
-                  minimumFractionDigits: 0 
-                }).format(value.minOrderAmount);
-                details.push(`💰 Pedido mínimo: ${minAmount}`);
-              }
-              
-              if (details.length > 0) {
-                reply += details.map(d => `  ${d}`).join('\n') + '\n';
-              }
-              reply += `\n`;
-            }
           });
+          reply += `\n`;
         }
         
-        // 3. Pregunta final
-        reply += `\n¿Te gustaría hacer una ${company.type === 'restaurant' ? 'reserva' : 'cita'}? 😊`;
+        // Si está en proceso de reserva y necesita productos, pedir que seleccione
+        if (isContinuingReservation && context.collectedData?.service) {
+          const availableServices = config?.services || {};
+          const selectedService = availableServices[context.collectedData.service];
+          if (selectedService?.requiresProducts) {
+            reply += `\nPor favor, dime qué productos quieres de nuestro menú. Por ejemplo: "quiero una pizza margherita y una coca cola" 😊`;
+          } else {
+            reply += `¿Te gustaría hacer una reserva? 😊`;
+          }
+        } else {
+          reply += `¿Te gustaría hacer una reserva? 😊`;
+        }
         
         await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
         return {
           reply,
           intention: 'consultar',
           confidence: 1.0,
-          conversationState: context.stage,
+          conversationState: context.stage, // Mantener el estado actual (collecting si está en reserva)
         };
       }
     }
 
     let detection: DetectionResult;
 
-    if (isGreeting && !hasConsultaKeywords && !asksForProducts && !lowerMessage.includes('reservar') && !lowerMessage.includes('reserva') && !lowerMessage.includes('cita')) {
+    // NUEVA CAPA 0: Keywords desde BD (más rápido, escalable)
+    // Intentar detectar servicio por keywords primero
+    const keywordMatch = await this.keywordsService.findServiceByKeyword(
+      dto.message,
+      dto.companyId,
+    );
+
+    // Si encontramos un match con buena confianza, usarlo
+    if (keywordMatch && keywordMatch.confidence >= 0.8) {
+      // Usar OpenAI para extraer otros datos (fecha, hora, etc.) pero usar el servicio del keyword
+      const layer3Detection = await this.layer3.detect(
+        dto.message,
+        dto.companyId,
+        userId,
+      );
+      detection = {
+        intention: 'reservar',
+        confidence: Math.max(layer3Detection.confidence, keywordMatch.confidence),
+        extractedData: {
+          ...layer3Detection.extractedData,
+          service: keywordMatch.serviceKey, // Usar servicio del keyword (más confiable)
+        },
+      };
+    } else if (asksParaLlevar && !hasConsultaKeywords) {
+      // Si dice "pedir para llevar" o similar, es una intención de reservar con servicio "mesa"
+      // Usar OpenAI para extraer datos pero forzar intención "reservar"
+      const layer3Detection = await this.layer3.detect(dto.message, dto.companyId, userId);
+      detection = {
+        intention: 'reservar',
+        confidence: 0.9,
+        extractedData: {
+          ...layer3Detection.extractedData,
+          service: 'mesa', // Forzar servicio "mesa" para "para llevar"
+        },
+      };
+    } else if (isGreeting && !hasConsultaKeywords && !asksForProducts && !this.keywordDetector.mentionsReservation(dto.message)) {
       // Si es SOLO un saludo sin otras intenciones, detectar como "saludar"
       detection = {
         intention: 'saludar',
         confidence: 1.0,
       };
-    } else if (asksForProducts && !lowerMessage.includes('reservar') && !lowerMessage.includes('reserva')) {
-      // Si pregunta por productos/servicios y NO tiene palabras de reserva, priorizar consulta
-      // INCLUSO si estamos en medio de una reserva
-      console.log(`🔍 [DETECCION] Detectado como consultar por asksForProducts`);
-      detection = {
-        intention: 'consultar',
-        confidence: 0.95,
-      };
-    } else if (hasConsultaKeywords && !lowerMessage.includes('reservar') && !lowerMessage.includes('reserva')) {
+    } else if (hasConsultaKeywords && !this.keywordDetector.mentionsReservation(dto.message)) {
       // Si tiene palabras de consulta y NO tiene palabras de reserva, priorizar consulta
       // INCLUSO si estamos en medio de una reserva
       detection = {
@@ -342,11 +289,19 @@ export class BotEngineService {
         if (layer3Detection.suggestedReply) {
           detection.suggestedReply = layer3Detection.suggestedReply;
         }
-      } else if (detection.confidence < 0.6) {
+      } else if (detection.confidence < 0.6 || detection.intention === 'consultar') {
         // Si aún no hay confianza → CAPA 3 (OpenAI)
+        // También usar OpenAI para consultas para extraer fecha/hora si están presentes
         const layer3Detection = await this.layer3.detect(dto.message, dto.companyId, userId);
-        if (layer3Detection.confidence > detection.confidence) {
-          detection = layer3Detection;
+        if (layer3Detection.confidence > detection.confidence || detection.intention === 'consultar') {
+          // Mantener intención "consultar" pero usar datos extraídos de OpenAI
+          if (detection.intention === 'consultar') {
+            detection.intention = 'consultar';
+            detection.confidence = Math.max(detection.confidence, layer3Detection.confidence);
+            detection.extractedData = layer3Detection.extractedData;
+          } else if (layer3Detection.confidence > detection.confidence) {
+            detection = layer3Detection;
+          }
         }
       }
     }
@@ -390,170 +345,46 @@ export class BotEngineService {
         detection.missingFields = result.missingFields;
       }
     } else if (detection.intention === 'cancelar') {
-      // Implementar cancelación real de reservas
-      reply = await this.handleCancellation(dto, context, company);
+      reply = detection.suggestedReply || await this.messagesTemplates.getReservationCancel(company.type);
       newState.stage = 'idle';
     } else if (detection.intention === 'consultar') {
       const config = company.config as any;
       const hoursText = this.formatHours(config?.hours);
       
-      // Detectar si preguntan específicamente por horarios SOLAMENTE
-      const lowerMsg = dto.message.toLowerCase();
-      const normalizedMsg = normalizeText(lowerMsg);
-      const askingOnlyAboutHours = (
-        normalizedMsg.includes('horario') || 
-        normalizedMsg.includes('abren') || 
-        normalizedMsg.includes('cierran') || 
-        normalizedMsg.includes('cuando') ||
-        normalizedMsg.includes('horario disponible') ||
-        normalizedMsg.includes('horarios disponibles') ||
-        (normalizedMsg.includes('cuales') && normalizedMsg.includes('horario')) ||
-        (normalizedMsg.includes('cuáles') && normalizedMsg.includes('horario'))
-      ) &&
-      !normalizedMsg.includes('servicios') &&
-      !normalizedMsg.includes('tratamientos') &&
-      !normalizedMsg.includes('menu') &&
-      !normalizedMsg.includes('menú') &&
-      !normalizedMsg.includes('producto') &&
-      !normalizedMsg.includes('que tienen') &&
-      !normalizedMsg.includes('qué tienen') &&
-      !normalizedMsg.includes('carta') &&
-      !normalizedMsg.includes('ofrecen');
+      // Si preguntan por servicios y hay servicios configurados, mostrarlos
+      const askingAboutServices = this.keywordDetector.asksForProducts(dto.message);
       
-      // DEBUG: Log para verificar detección
-      console.log(`🔍 [HORARIOS] Mensaje: "${dto.message}"`);
-      console.log(`🔍 [HORARIOS] askingOnlyAboutHours: ${askingOnlyAboutHours}`);
-      console.log(`🔍 [HORARIOS] config?.hours:`, config?.hours);
-      console.log(`🔍 [HORARIOS] hoursText: "${hoursText}"`);
+      // Verificar si la consulta incluye fecha/hora específica (consulta de disponibilidad)
+      const extracted = detection.extractedData || {};
+      const hasSpecificDate = extracted.date !== null && extracted.date !== undefined;
+      const hasSpecificTime = extracted.time !== null && extracted.time !== undefined;
       
-      // NO declarar 'let reply' aquí - usar la variable del scope superior
-      reply = '';
-      let hasContent = false;
-      
-      // PRIMERO: Si NO preguntan SOLO por horarios y hay productos, mostrarlos SIEMPRE
-      if (!askingOnlyAboutHours && config?.products && Array.isArray(config.products) && config.products.length > 0) {
-        reply += `📋 **${company.type === 'restaurant' ? '🍽️ Nuestro Menú' : company.type === 'clinic' ? '🦷 Nuestros Tratamientos' : '📦 Nuestros Productos'}:**\n\n`;
-        
-        // Agrupar por categoría
-        const grouped: any = {};
-        config.products.forEach((p: any) => {
-          if (!grouped[p.category]) grouped[p.category] = [];
-          grouped[p.category].push(p);
+      // Si tiene fecha/hora específica, verificar disponibilidad real
+      if (hasSpecificDate && hasSpecificTime) {
+        const available = await this.availability.check(dto.companyId, {
+          date: extracted.date!,
+          time: extracted.time!,
+          guests: extracted.guests || 1,
+          userId: userId,
+          service: extracted.service,
         });
         
-        for (const [category, items] of Object.entries(grouped)) {
-          const categoryName = category.charAt(0).toUpperCase() + category.slice(1);
-          reply += `**${categoryName}:**\n`;
-          (items as any[]).forEach((item: any) => {
-            const price = new Intl.NumberFormat('es-CO', { 
-              style: 'currency', 
-              currency: 'COP', 
-              minimumFractionDigits: 0 
-            }).format(item.price);
-            reply += `  • ${item.name} - ${price}`;
-            if (item.duration) reply += ` ⏱️ ${item.duration} min`;
-            if (item.description) reply += `\n    ${item.description}`;
-            reply += `\n`;
-          });
-          reply += `\n`;
-        }
-        hasContent = true;
-      }
-      
-      // SEGUNDO: Mostrar services SIEMPRE si existen (junto con productos o solos)
-      if (config?.services && Object.keys(config.services).length > 0 && !askingOnlyAboutHours) {
-        if (hasContent) reply += `\n---\n\n`;
-        reply += `🛎️ **Tipos de ${company.type === 'restaurant' ? 'Reserva' : 'Cita'} Disponibles:**\n\n`;
-        
-        Object.entries(config.services).forEach(([key, value]: [string, any]) => {
-          if (value.enabled) {
-            reply += `**${value.name}**\n`;
-            if (value.description) reply += `  ${value.description}\n`;
-            
-            // Información adicional del servicio
-            const details: string[] = [];
-            if (value.minAdvanceHours) {
-              details.push(`⏰ Mínimo ${value.minAdvanceHours} horas de anticipación`);
-            }
-            if (value.minAdvanceMinutes) {
-              const hours = Math.floor(value.minAdvanceMinutes / 60);
-              const mins = value.minAdvanceMinutes % 60;
-              if (hours > 0) {
-                details.push(`⏰ Mínimo ${hours}h ${mins > 0 ? mins + 'min' : ''} de anticipación`);
-              } else {
-                details.push(`⏰ Mínimo ${value.minAdvanceMinutes} minutos de anticipación`);
-              }
-            }
-            if (value.requiresPayment) {
-              details.push(`💳 Requiere pago anticipado`);
-            }
-            if (value.requiresProducts) {
-              details.push(`📋 Requiere seleccionar productos`);
-            }
-            if (value.deliveryFee) {
-              const fee = new Intl.NumberFormat('es-CO', { 
-                style: 'currency', 
-                currency: 'COP', 
-                minimumFractionDigits: 0 
-              }).format(value.deliveryFee);
-              details.push(`🚚 Costo de envío: ${fee}`);
-            }
-            if (value.minOrderAmount) {
-              const minAmount = new Intl.NumberFormat('es-CO', { 
-                style: 'currency', 
-                currency: 'COP', 
-                minimumFractionDigits: 0 
-              }).format(value.minOrderAmount);
-              details.push(`💰 Pedido mínimo: ${minAmount}`);
-            }
-            
-            if (details.length > 0) {
-              reply += details.map(d => `  ${d}`).join('\n') + '\n';
-            }
-            reply += `\n`;
-          }
-        });
-        hasContent = true;
-      }
-      
-      // TERCERO: Agregar horarios SIEMPRE si preguntan explícitamente
-      console.log(`🔍 [HORARIOS] Antes de agregar horarios - hasContent: ${hasContent}, askingOnlyAboutHours: ${askingOnlyAboutHours}`);
-      if (askingOnlyAboutHours) {
-        console.log(`🔍 [HORARIOS] Entrando en bloque de agregar horarios (askingOnlyAboutHours=true)`);
-        if (hasContent) reply += `---\n\n`;
-        if (config?.hours && Object.keys(config.hours).length > 0) {
-          const hoursSection = `🕐 **Horarios de Atención:**\n${hoursText}\n\n`;
-          reply += hoursSection;
-          console.log(`🔍 [HORARIOS] Horarios agregados al reply: "${hoursSection.substring(0, 50)}..."`);
+        if (available.isAvailable) {
+          const dateReadable = await import('../common/date-helper').then(m => m.DateHelper.formatDateReadable(extracted.date!));
+          reply = `✅ Sí, tenemos disponibilidad para el ${dateReadable} a las ${extracted.time}. ¿Te gustaría hacer una reserva?`;
         } else {
-          const noHoursMsg = `🕐 **Horarios de Atención:**\nNo hay horarios configurados. Por favor contacta directamente para consultar disponibilidad.\n\n`;
-          reply += noHoursMsg;
-          console.log(`🔍 [HORARIOS] Mensaje de "no hay horarios" agregado`);
+          reply = available.message || 'No hay disponibilidad en ese horario.';
+          if (available.alternatives && available.alternatives.length > 0) {
+            reply += ` ¿Te sirve ${available.alternatives[0]}?`;
+          }
         }
-        hasContent = true;
-        console.log(`🔍 [HORARIOS] hasContent actualizado a: ${hasContent}, reply length: ${reply.length}`);
-      } else if (!hasContent && (lowerMsg.includes('horario') || lowerMsg.includes('abren') || lowerMsg.includes('cierran'))) {
-        // Fallback: si no hay contenido y menciona horarios, agregarlos
-        console.log(`🔍 [HORARIOS] Fallback: agregando horarios sin askingOnlyAboutHours`);
-        if (config?.hours && Object.keys(config.hours).length > 0) {
-          reply += `🕐 **Horarios de Atención:**\n${hoursText}\n\n`;
-        }
-        hasContent = true;
+      } else if (askingAboutServices && config?.services) {
+        const servicesList = Object.entries(config.services)
+          .map(([key, value]: [string, any]) => `• ${value.name}`)
+          .join('\n');
+        reply = `Ofrecemos los siguientes servicios:\n\n${servicesList}\n\n¿Te gustaría agendar una cita?`;
       } else {
-        console.log(`🔍 [HORARIOS] NO se agregaron horarios - condición no cumplida`);
-      }
-      
-      console.log(`🔍 [HORARIOS] Reply antes de verificar hasContent: "${reply.substring(0, 100)}..."`);
-      console.log(`🔍 [HORARIOS] hasContent final: ${hasContent}`);
-      
-      // Si no se generó contenido específico, usar respuesta por defecto
-      if (!hasContent) {
-        console.log(`🔍 [HORARIOS] Usando respuesta por defecto`);
         reply = detection.suggestedReply || await this.messagesTemplates.getReservationQuery(company.type, hoursText);
-      } else {
-        // Agregar pregunta final si generamos contenido
-        reply += `\n¿Te gustaría hacer una ${company.type === 'restaurant' ? 'reserva' : 'cita'}? 😊`;
-        console.log(`🔍 [HORARIOS] Reply final construido: "${reply.substring(0, 200)}..."`);
       }
       
       // NO resetear stage si estamos en medio de una reserva
@@ -568,6 +399,9 @@ export class BotEngineService {
 
     // 10. Guardar estado actualizado
     await this.conversations.saveContext(userId, dto.companyId, newState);
+    
+    // Invalidar cache de contexto después de guardar cambios
+    this.contextCache.invalidateContext(contextKey);
 
     // 11. Agregar respuesta al historial
     await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
@@ -579,7 +413,6 @@ export class BotEngineService {
     }
 
     // 13. Retornar respuesta
-    console.log(`🔍 [RETURN] Intención: ${detection.intention}, Reply length: ${reply?.length || 0}, Reply preview: "${reply?.substring(0, 150) || 'EMPTY'}..."`);
     return {
       reply,
       intention: detection.intention,
@@ -588,6 +421,16 @@ export class BotEngineService {
       conversationState: newState.stage,
       conversationId,
     };
+    } catch (error) {
+      this.logger.error('Error en processMessage:', error);
+      // Retornar respuesta de error genérica
+      return {
+        reply: 'Lo siento, hubo un error procesando tu mensaje. Por favor intenta de nuevo.',
+        intention: 'otro',
+        confidence: 0,
+        conversationState: 'idle',
+      };
+    }
   }
 
   private async handleReservation(
@@ -599,8 +442,11 @@ export class BotEngineService {
     const settings = await this.messagesTemplates.getReservationSettings(companyType);
     const missingFieldsLabels = await this.messagesTemplates.getMissingFieldsLabels(companyType);
     
-    // Obtener configuración de la empresa para validar servicios
-    const company = await this.companies.findOne(dto.companyId);
+    // Obtener configuración de la empresa para validar servicios (usar cache)
+    const company = await this.contextCache.getOrLoadCompany(
+      dto.companyId,
+      () => this.companies.findOne(dto.companyId)
+    );
     const config = company?.config as any;
     const availableServices = config?.services || {};
     const hasMultipleServices = Object.keys(availableServices).length > 1;
@@ -610,145 +456,12 @@ export class BotEngineService {
 
     // Actualizar datos recopilados - solo sobrescribir con valores que NO sean null/undefined
     const extracted = detection.extractedData || {};
-    
-    console.log(`🔍 [DEBUG] hasMultipleServices: ${hasMultipleServices}, extracted.service: ${extracted?.service}, dto.message: ${dto.message}`);
-    
-    // FALLBACK: Si hay múltiples servicios pero no se extrajo ninguno, intentar detectar por keywords en el mensaje original
-    if (hasMultipleServices && !extracted.service && dto.message) {
-      const message = dto.message.toLowerCase().trim();
-      console.log(`🔍 [FALLBACK] Intentando detectar servicio del mensaje: "${dto.message}"`);
-      console.log(`🔍 [FALLBACK] extracted.service actual:`, extracted.service);
-      console.log(`🔍 [FALLBACK] Servicios disponibles:`, Object.keys(availableServices));
-      
-      // Generar keywords genéricos para cada servicio basándose en su nombre y key
-      const normalizeForMatching = (text: string) => {
-        return text
-          .normalize('NFD')
-          .replace(/[\u0300-\u036f]/g, '') // Quitar acentos
-          .toLowerCase()
-          .trim();
-      };
-      
-      const normalizedMessage = normalizeForMatching(message);
-      
-      // Función para generar sinónimos comunes basándose en el nombre del servicio
-      const generateServiceSynonyms = (key: string, serviceName: string): string[] => {
-        const normalizedKey = normalizeForMatching(key);
-        const normalizedName = normalizeForMatching(serviceName);
-        
-        const synonyms: string[] = [
-          normalizedKey, // La key siempre es un sinónimo
-          normalizedName, // El nombre siempre es un sinónimo
-        ];
-        
-        // Extraer palabras clave del nombre del servicio
-        const nameWords = normalizedName.split(/\s+/).filter(w => w.length > 2);
-        synonyms.push(...nameWords);
-        
-        // Sinónimos comunes basados en el nombre
-        if (normalizedName.includes('domicilio') || normalizedKey.includes('domicilio')) {
-          synonyms.push('pedir a domicilio', 'pedido a domicilio', 'delivery', 'envío', 'a domicilio', 'pedir', 'pedido');
-        }
-        if (normalizedName.includes('mesa') || normalizedKey.includes('mesa')) {
-          synonyms.push('reservar mesa', 'mesa en restaurante', 'comer aquí', 'en el restaurante');
-        }
-        if (normalizedName.includes('limpieza') || normalizedKey.includes('limpieza')) {
-          synonyms.push('profilaxis', 'limpieza dental');
-        }
-        if (normalizedName.includes('consulta') || normalizedKey.includes('consulta')) {
-          synonyms.push('revisión', 'cita', 'consulta médica');
-        }
-        if (normalizedName.includes('ortodoncia') || normalizedKey.includes('ortodoncia')) {
-          synonyms.push('brackets', 'aparatos', 'corrección dental');
-        }
-        if (normalizedName.includes('blanqueamiento') || normalizedKey.includes('blanqueamiento')) {
-          synonyms.push('blanquear', 'blanqueamiento dental', 'estética dental');
-        }
-        
-        // Agregar palabras del nombre con artículos comunes
-        nameWords.forEach(word => {
-          synonyms.push(`la ${word}`, `el ${word}`, `una ${word}`, `un ${word}`);
-        });
-        
-        return [...new Set(synonyms)]; // Eliminar duplicados
-      };
-      
-      // Buscar coincidencias para cada servicio (ordenar por especificidad)
-      const serviceMatches: Array<{ key: string; score: number; matchedKeyword: string }> = [];
-      
-      for (const [key, value] of Object.entries(availableServices)) {
-        const serviceName = (value as any)?.name || '';
-        const serviceKeywords = generateServiceSynonyms(key, serviceName);
-        
-        // Buscar coincidencias
-        let bestMatch: { keyword: string; score: number } | null = null;
-        
-        for (const keyword of serviceKeywords) {
-          const normalizedKeyword = normalizeForMatching(keyword);
-          
-          // Coincidencia exacta (mayor puntuación)
-          if (normalizedMessage === normalizedKeyword) {
-            bestMatch = { keyword, score: 10 };
-            break;
-          }
-          
-          // Coincidencia de frase completa
-          if (normalizedMessage.includes(normalizedKeyword) && normalizedKeyword.length > 3) {
-            const score = normalizedKeyword.length; // Frases más largas tienen mayor puntuación
-            if (!bestMatch || score > bestMatch.score) {
-              bestMatch = { keyword, score };
-            }
-          }
-          
-          // Coincidencia de palabra dentro de la frase
-          const messageWords = normalizedMessage.split(/\s+/);
-          const keywordWords = normalizedKeyword.split(/\s+/);
-          
-          if (keywordWords.every(kw => messageWords.some(mw => mw.includes(kw) || kw.includes(mw)))) {
-            const score = normalizedKeyword.length * 0.5; // Menor puntuación para palabras individuales
-            if (!bestMatch || score > bestMatch.score) {
-              bestMatch = { keyword, score };
-            }
-          }
-        }
-        
-        if (bestMatch) {
-          serviceMatches.push({
-            key,
-            score: bestMatch.score,
-            matchedKeyword: bestMatch.keyword,
-          });
-          console.log(`✅ [FALLBACK] Servicio "${key}" coincidió con keyword "${bestMatch.keyword}" (score: ${bestMatch.score})`);
-        }
-      }
-      
-      // Ordenar por puntuación y tomar el mejor
-      if (serviceMatches.length > 0) {
-        serviceMatches.sort((a, b) => b.score - a.score);
-        const bestMatch = serviceMatches[0];
-        extracted.service = bestMatch.key;
-        console.log(`✅ [FALLBACK] Servicio detectado: "${bestMatch.key}" del mensaje: "${dto.message}" (matched: "${bestMatch.matchedKeyword}")`);
-      } else {
-        console.log(`⚠️ [FALLBACK] No se pudo detectar servicio del mensaje: "${dto.message}"`);
-        console.log(`⚠️ [FALLBACK] Mensaje procesado: "${normalizedMessage}"`);
-      }
-    }
-    
-    // Agregar el servicio detectado por fallback si existe
-    if (extracted.service) {
-      console.log(`✅ [DEBUG] Servicio detectado en extracted.service: "${extracted.service}"`);
-    }
-    
     const collected = {
       ...context.collectedData,
       ...Object.fromEntries(
         Object.entries(extracted).filter(([_, value]) => value !== null && value !== undefined)
       ),
     };
-    
-    // Log final para debug
-    console.log(`✅ [DEBUG] collected.service final: "${collected.service}"`);
-    console.log(`✅ [DEBUG] collected object:`, JSON.stringify(collected, null, 2));
 
     // Identificar qué datos NUEVOS se recibieron en este mensaje
     const newData: any = {};
@@ -758,10 +471,108 @@ export class BotEngineService {
       }
     }
 
-    // Determinar qué falta - guests es opcional según el tipo
+    // Detectar si el usuario quiere cambiar de domicilio a mesa (usar servicio)
+    const noQuiereDomicilio = this.keywordDetector.doesNotWantDelivery(dto.message);
+    
+    // Si el usuario dice que NO quiere domicilio y tenía domicilio, cambiar a mesa
+    if (noQuiereDomicilio && collected.service === 'domicilio' && availableServices['mesa']) {
+      collected.service = 'mesa';
+      newData.service = 'mesa';
+      // Limpiar productos si cambia a mesa (mesa no requiere productos)
+      if (collected.products) {
+        delete collected.products;
+      }
+    }
+
+    // Intentar mapear productos/tratamientos mencionados en texto a IDs del catálogo
+    // Esto permite que frases como "pizza margherita y coca cola" se conviertan en IDs conocidos
+    const catalogProducts = Array.isArray(config?.products) ? config.products : [];
+    if (catalogProducts.length > 0) {
+      const normalizedMsg = this.textUtils.normalizeText(dto.message.toLowerCase());
+      const foundProductIds: string[] = [];
+      for (const product of catalogProducts) {
+        const name = this.textUtils.normalizeText(product.name || '');
+        if (name && normalizedMsg.includes(name)) {
+          foundProductIds.push(product.id);
+        }
+      }
+      if (foundProductIds.length > 0) {
+        const existing = Array.isArray(collected.products) ? collected.products : [];
+        const merged = Array.from(new Set([...existing, ...foundProductIds]));
+        collected.products = merged;
+        newData.products = foundProductIds;
+        // Para clínica: si no hay tratamiento explícito, usar el primero detectado
+        if (!collected.treatment) {
+          collected.treatment = foundProductIds[0];
+        }
+        // Si hay productos detectados, preferir un servicio que requiera productos
+        const currentService = collected.service;
+        const currentRequiresProducts = currentService ? availableServices[currentService]?.requiresProducts : false;
+        const canSwitchToDomicilio = availableServices['domicilio']?.requiresProducts === true;
+        const canSwitchToCita = availableServices['cita']?.requiresProducts === true;
+
+        if (!currentService || !currentRequiresProducts) {
+          if (canSwitchToDomicilio) {
+            collected.service = 'domicilio';
+            newData.service = 'domicilio';
+          } else if (canSwitchToCita) {
+            collected.service = 'cita';
+            newData.service = 'cita';
+          }
+        }
+      }
+
+      // Heurística extra: si menciona productos o términos de pedido, forzar servicio con productos
+      // Usar servicios de detección centralizados
+      const mentionsDelivery = this.keywordDetector.mentionsDelivery(dto.message);
+      const mentionsFood = this.keywordDetector.mentionsFood(dto.message);
+
+      const currentService = collected.service;
+      const currentRequiresProducts = currentService ? availableServices[currentService]?.requiresProducts : false;
+      const canSwitchToDomicilio = availableServices['domicilio']?.requiresProducts === true;
+      const canSwitchToCita = availableServices['cita']?.requiresProducts === true;
+
+      if (!currentService || !currentRequiresProducts) {
+        if (canSwitchToDomicilio && (foundProductIds.length > 0 || mentionsDelivery || mentionsFood)) {
+          collected.service = 'domicilio';
+          newData.service = 'domicilio';
+        } else if (canSwitchToCita && mentionsDelivery) {
+          collected.service = 'cita';
+          newData.service = 'cita';
+        }
+      }
+    }
+
+    // Determinar qué falta según el servicio seleccionado
+    const selectedService = collected.service ? availableServices[collected.service] : null;
+    const requiresProducts = selectedService?.requiresProducts === true;
+    const requiresPayment = selectedService?.requiresPayment === true || company?.requiresPayment === true;
+    
     const required = ['date', 'time', 'phone'];
-    if (settings.requireGuests) {
-      required.push('guests');
+    
+    // Si el servicio requiere productos, NO pedir "personas", pedir "productos"
+    if (requiresProducts) {
+      // Para servicios con productos (domicilio), NO pedir guests
+      if (!collected.products || (Array.isArray(collected.products) && collected.products.length === 0)) {
+        required.push('products');
+        missingFieldsLabels['products'] = 'productos';
+      }
+    } else {
+      // Para servicios sin productos (mesa), pedir guests si está configurado
+      if (settings.requireGuests) {
+        required.push('guests');
+      }
+    }
+
+    // Servicios que requieren pago pero no productos (ej. clínica: tratamiento obligatorio)
+    // Si hay catálogo de productos/tratamientos, exigir "treatment" (o "product") antes de cerrar
+    if (requiresPayment && (!requiresProducts)) {
+      const hasCatalog = Array.isArray(config?.products) && config.products.length > 0;
+      const hasTreatment = collected.treatment || collected.product;
+      if (hasCatalog && !hasTreatment) {
+        required.push('treatment');
+        missingFieldsLabels['treatment'] = 'tratamiento';
+      }
     }
     
     // Si hay múltiples servicios, el servicio es obligatorio
@@ -771,12 +582,6 @@ export class BotEngineService {
     }
     
     const missing = required.filter((f) => !collected[f]);
-    
-    // Si el servicio fue detectado por fallback, asegurar que no esté en missing
-    if (collected.service && missing.includes('service')) {
-      missing.splice(missing.indexOf('service'), 1);
-      console.log(`✅ [FALLBACK] Servicio "${collected.service}" detectado y removido de missingFields`);
-    }
     
     // Validar que el servicio seleccionado existe
     if (collected.service && hasMultipleServices && !availableServices[collected.service]) {
@@ -851,7 +656,45 @@ export class BotEngineService {
 
     // Crear reserva
     try {
-      await this.reservations.create({
+      // Calcular monto si requiere pago
+      let paymentAmount = 0;
+      let paymentDescription = '';
+      
+      if (requiresProducts && collected.products) {
+        // Calcular total de productos
+        const products = config?.products || [];
+        const productsList = Array.isArray(collected.products) ? collected.products : [];
+        let subtotal = 0;
+        
+        for (const productId of productsList) {
+          const product = products.find((p: any) => p.id === productId);
+          if (product) {
+            subtotal += product.price || 0;
+          }
+        }
+        
+        // Agregar costo de envío si es domicilio
+        const deliveryFee = selectedService?.deliveryFee || 0;
+        paymentAmount = subtotal + deliveryFee;
+        paymentDescription = `Pedido a domicilio - ${productsList.length} producto(s)`;
+      } else if (requiresPayment && collected.service) {
+        // Para citas, usar precio del tratamiento/producto seleccionado
+        const products = config?.products || [];
+        const treatmentId = collected.treatment || collected.product;
+        if (treatmentId) {
+          const treatment = products.find((p: any) => p.id === treatmentId);
+          if (treatment) {
+            paymentAmount = treatment.price || 0;
+            paymentDescription = `Cita - ${treatment.name}`;
+          }
+        }
+      }
+      
+      // Aplicar porcentaje de pago anticipado
+      const paymentPercentage = company?.paymentPercentage || 100;
+      const finalAmount = Math.round(paymentAmount * (paymentPercentage / 100));
+      
+      const reservation = await this.reservations.create({
         company: { connect: { id: dto.companyId } },
         userId: dto.userId,
         date: collected.date!,
@@ -860,10 +703,44 @@ export class BotEngineService {
         phone: collected.phone,
         name: collected.name,
         service: collected.service,
-        status: 'confirmed',
+        status: requiresPayment && finalAmount > 0 ? 'pending' : 'confirmed', // Pendiente si requiere pago
+        metadata: {
+          products: collected.products,
+          treatment: collected.treatment || collected.product,
+          paymentAmount: finalAmount,
+          requiresPayment,
+        },
       });
 
-      const reply = await this.messagesTemplates.getReservationConfirm(companyType, {
+      // Generar link de pago si es necesario
+      let paymentUrl = null;
+      if (requiresPayment && finalAmount > 0) {
+        try {
+          // Obtener o crear conversación
+          const conversationId = await this.conversations.findOrCreateConversation(dto.userId, dto.companyId);
+          
+          // Obtener datos del usuario
+          const user = await this.usersService.findOne(dto.userId);
+          
+          // Crear pago
+          const payment = await this.paymentsService.createPayment({
+            companyId: dto.companyId,
+            conversationId,
+            amount: finalAmount,
+            description: paymentDescription,
+            customerEmail: user?.email || `user-${dto.userId}@example.com`,
+            customerName: user?.name || collected.name || 'Cliente',
+          });
+          
+          paymentUrl = payment.paymentUrl;
+        } catch (paymentError) {
+          console.error('Error creando pago:', paymentError);
+          // Continuar sin pago si hay error
+        }
+      }
+
+      // Generar respuesta de confirmación
+      let reply = await this.messagesTemplates.getReservationConfirm(companyType, {
         date: collected.date!,
         time: collected.time!,
         guests: collected.guests,
@@ -872,6 +749,40 @@ export class BotEngineService {
         serviceName: collected.service && availableServices[collected.service]?.name,
       });
 
+      // Breakdown de productos/tratamientos (domicilio/cita) y envío
+      let productsBreakdown = '';
+      if (requiresProducts && collected.products && Array.isArray(collected.products)) {
+        const products = config?.products || [];
+        const productLines: string[] = [];
+        for (const productId of collected.products) {
+          const product = products.find((p: any) => p.id === productId);
+          if (product) {
+            productLines.push(`• ${product.name} - $${(product.price || 0).toLocaleString('es-CO')}`);
+          }
+        }
+        if (productLines.length > 0) {
+          productsBreakdown = `\n\n🛍️ Productos:\n${productLines.join('\n')}`;
+        }
+        if (selectedService?.deliveryFee) {
+          productsBreakdown += `\n🚚 Envío: $${selectedService.deliveryFee.toLocaleString('es-CO')}`;
+        }
+      }
+
+      if (productsBreakdown) {
+        reply += productsBreakdown;
+      }
+
+      // Agregar información de pago si es necesario (incluye total y anticipo)
+      if (requiresPayment && finalAmount > 0) {
+        const totalText = paymentAmount > 0 ? `\nTotal: $${paymentAmount.toLocaleString('es-CO')}` : '';
+        const anticipoText = `\n💳 Anticipo requerido: $${finalAmount.toLocaleString('es-CO')} (${paymentPercentage}% del total)`;
+        if (paymentUrl) {
+          reply += `${totalText}${anticipoText}\n\n🔗 Link de pago: ${paymentUrl}`;
+        } else {
+          reply += `${totalText}${anticipoText}`;
+        }
+      }
+
       return {
         reply,
         newState: {
@@ -879,6 +790,7 @@ export class BotEngineService {
           collectedData: {},
           conversationHistory: context.conversationHistory,
         },
+        missingFields: [], // no reportar faltantes al completar
       };
     } catch (error) {
       console.error('Error creando reserva:', error);
@@ -938,105 +850,6 @@ export class BotEngineService {
     }
 
     return formattedSlots.join('. ');
-  }
-
-  private async handleCancellation(
-    dto: ProcessMessageDto,
-    context: any,
-    company: any,
-  ): Promise<string> {
-    try {
-      // Importar DateHelper una sola vez al inicio
-      const { DateHelper } = await import('../common/date-helper');
-      
-      // VALIDACIÓN 1: Verificar que el usuario existe
-      if (!dto.userId) {
-        return 'No puedo identificar tu usuario. Por favor proporciona tu información de contacto.';
-      }
-
-      // Buscar reservas del usuario en esta empresa
-      const userReservations = await this.reservations.findByUserAndCompany(
-        dto.userId,
-        dto.companyId,
-      );
-
-      // VALIDACIÓN 2: Filtrar solo reservas FUTURAS y activas (no canceladas, no pasadas)
-      const today = DateHelper.getTodayString();
-      const now = DateHelper.getNow();
-      const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-      
-      const activeReservations = userReservations.filter(
-        (r) => r.status !== 'cancelled' && 
-               (r.date > today || (r.date === today && r.time > currentTime))
-      );
-
-      if (activeReservations.length === 0) {
-        return `No tienes reservas futuras activas para cancelar en ${company.name}.`;
-      }
-
-      // Si solo hay una reserva, PEDIR CONFIRMACIÓN primero
-      if (activeReservations.length === 1) {
-        const reservation = activeReservations[0];
-        const fechaFormateada = DateHelper.formatDateReadable(reservation.date);
-        
-        // VALIDACIÓN 3: Verificar si el mensaje confirma la cancelación
-        const lowerMsg = dto.message.toLowerCase();
-        const confirmsCancel = lowerMsg.includes('sí') || 
-                              lowerMsg.includes('si') ||
-                              lowerMsg.includes('confirmo') ||
-                              lowerMsg.includes('seguro') ||
-                              lowerMsg.includes('adelante') ||
-                              (context.pendingCancellation === reservation.id);
-        
-        if (!confirmsCancel && !context.pendingCancellation) {
-          // Guardar en contexto que hay cancelación pendiente
-          context.pendingCancellation = reservation.id;
-          await this.conversations.saveContext(dto.userId, dto.companyId, context);
-          
-          return `⚠️ ¿Estás seguro que deseas cancelar tu ${company.type === 'restaurant' ? 'reserva' : 'cita'} del ${fechaFormateada} a las ${reservation.time}?\n\nResponde "sí" para confirmar la cancelación.`;
-        }
-        
-        // Proceder con la cancelación
-        await this.reservations.update(reservation.id, { status: 'cancelled' });
-        delete context.pendingCancellation;
-        await this.conversations.saveContext(dto.userId, dto.companyId, context);
-        
-        return `✅ Tu ${company.type === 'restaurant' ? 'reserva' : 'cita'} del ${fechaFormateada} a las ${reservation.time} ha sido cancelada exitosamente.\n\nSi cambias de opinión, puedes hacer una nueva reserva cuando quieras. 😊`;
-      }
-
-      // Si hay múltiples reservas, listarlas y pedir confirmación
-      const reservationsList = activeReservations
-        .slice(0, 5) // Mostrar máximo 5
-        .map((r, index) => {
-          const fechaFormateada = DateHelper.formatDateReadable(r.date);
-          return `${index + 1}. ${fechaFormateada} a las ${r.time}${r.service ? ` - ${r.service}` : ''}`;
-        })
-        .join('\n');
-
-      // Intentar extraer número o fecha del mensaje
-      const lowerMessage = dto.message.toLowerCase();
-      const dateMatches = lowerMessage.match(/(mañana|hoy|ayer|el \d+|para el \d+)/);
-      const numberMatch = lowerMessage.match(/\d+/);
-
-      if (numberMatch) {
-        // Si mencionó un número, intentar cancelar esa reserva
-        const index = parseInt(numberMatch[0]) - 1;
-        if (index >= 0 && index < activeReservations.length) {
-          const reservation = activeReservations[index];
-          await this.reservations.update(reservation.id, { status: 'cancelled' });
-          
-          const fechaFormateada = DateHelper.formatDateReadable(reservation.date);
-          
-          return `✅ Tu ${company.type === 'restaurant' ? 'reserva' : 'cita'} del ${fechaFormateada} a las ${reservation.time} ha sido cancelada exitosamente.`;
-        }
-      }
-
-      // Si no pudo identificar cuál cancelar, listar opciones
-      return `Tienes ${activeReservations.length} ${company.type === 'restaurant' ? 'reservas' : 'citas'} activas:\n\n${reservationsList}\n\nPor favor indica cuál deseas cancelar (número o fecha específica).`;
-    } catch (error) {
-      console.error('Error en handleCancellation:', error);
-      return await this.messagesTemplates.getReservationCancel(company.type);
-    }
   }
 }
 

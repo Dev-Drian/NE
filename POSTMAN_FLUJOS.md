@@ -171,3 +171,4 @@ Bot Reservas - Flujos de Prueba
 
 **📝 Nota:** Recuerda tener el servidor corriendo en `http://localhost:3030` antes de ejecutar las requests.
 
+

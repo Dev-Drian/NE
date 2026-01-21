@@ -10,6 +10,7 @@ async function main() {
   await prisma.intentionExample.deleteMany();
   await prisma.intentionPattern.deleteMany();
   await prisma.intention.deleteMany();
+  await prisma.serviceKeyword.deleteMany();
   await prisma.company.deleteMany();
   await prisma.user.deleteMany();
   await prisma.messageTemplateConfig.deleteMany();
@@ -664,6 +665,75 @@ async function main() {
   });
 
   console.log(`✅ Usuario adicional creado: ${user3.name}`);
+
+  // Crear keywords de servicios (escalable, en BD)
+  console.log('\n📝 Creando keywords de servicios...');
+  
+  // Keywords GLOBALES (aplican a todas las empresas)
+  const globalKeywords = [
+    // Servicio: domicilio
+    { serviceKey: 'domicilio', keyword: 'pedir a domicilio', type: 'contains', weight: 0.95 },
+    { serviceKey: 'domicilio', keyword: 'domicilio', type: 'contains', weight: 0.9 },
+    { serviceKey: 'domicilio', keyword: 'delivery', type: 'contains', weight: 0.9 },
+    { serviceKey: 'domicilio', keyword: 'a domicilio', type: 'contains', weight: 0.95 },
+    { serviceKey: 'domicilio', keyword: 'envío', type: 'contains', weight: 0.85 },
+    { serviceKey: 'domicilio', keyword: 'pedido a domicilio', type: 'contains', weight: 0.95 },
+    { serviceKey: 'domicilio', keyword: 'quiero un domicilio', type: 'contains', weight: 0.95 },
+    { serviceKey: 'domicilio', keyword: 'necesito un domicilio', type: 'contains', weight: 0.95 },
+    { serviceKey: 'domicilio', keyword: 'un domicilio', type: 'contains', weight: 0.9 },
+    { serviceKey: 'domicilio', keyword: 'pedir domicilio', type: 'contains', weight: 0.95 },
+    { serviceKey: 'domicilio', keyword: 'domicilio para', type: 'contains', weight: 0.9 },
+    { serviceKey: 'domicilio', keyword: 'que me lo traigan', type: 'contains', weight: 0.95 },
+    { serviceKey: 'domicilio', keyword: 'que me lo lleven', type: 'contains', weight: 0.95 },
+    
+    // Servicio: mesa
+    { serviceKey: 'mesa', keyword: 'mesa', type: 'contains', weight: 0.9 },
+    { serviceKey: 'mesa', keyword: 'restaurante', type: 'contains', weight: 0.85 },
+    { serviceKey: 'mesa', keyword: 'comer aquí', type: 'contains', weight: 0.9 },
+    { serviceKey: 'mesa', keyword: 'en el restaurante', type: 'contains', weight: 0.9 },
+    { serviceKey: 'mesa', keyword: 'reservar mesa', type: 'contains', weight: 0.95 },
+    { serviceKey: 'mesa', keyword: 'mesa en restaurante', type: 'contains', weight: 0.9 },
+    { serviceKey: 'mesa', keyword: 'quiero una mesa', type: 'contains', weight: 0.95 },
+    { serviceKey: 'mesa', keyword: 'para llevar', type: 'contains', weight: 0.9 },
+    { serviceKey: 'mesa', keyword: 'pedir para llevar', type: 'contains', weight: 0.95 },
+    { serviceKey: 'mesa', keyword: 'llevar', type: 'contains', weight: 0.85 },
+    { serviceKey: 'mesa', keyword: 'take away', type: 'contains', weight: 0.85 },
+    { serviceKey: 'mesa', keyword: 'recoger', type: 'contains', weight: 0.9 },
+    { serviceKey: 'mesa', keyword: 'pasar a recoger', type: 'contains', weight: 0.9 },
+    
+    // Exclusiones (cambiar de domicilio a mesa)
+    { serviceKey: 'mesa', keyword: 'no quiero que me lo traigan', type: 'contains', weight: 0.95 },
+    { serviceKey: 'mesa', keyword: 'no quiero que me la traigan', type: 'contains', weight: 0.95 },
+    { serviceKey: 'mesa', keyword: 'no quiero domicilio', type: 'contains', weight: 0.95 },
+    { serviceKey: 'mesa', keyword: 'no quiero delivery', type: 'contains', weight: 0.95 },
+  ];
+
+  await prisma.serviceKeyword.createMany({
+    data: globalKeywords.map(k => ({
+      ...k,
+      companyId: null, // Global
+      language: 'es',
+      active: true,
+    })),
+  });
+
+  console.log(`✅ ${globalKeywords.length} keywords globales creados`);
+
+  // Keywords ESPECÍFICOS del restaurante (opcional, para personalización)
+  const restaurantKeywords = [
+    { serviceKey: 'mesa', keyword: 'take away', type: 'contains', weight: 0.9 },
+  ];
+
+  await prisma.serviceKeyword.createMany({
+    data: restaurantKeywords.map(k => ({
+      ...k,
+      companyId: company.id,
+      language: 'es',
+      active: true,
+    })),
+  });
+
+  console.log(`✅ ${restaurantKeywords.length} keywords específicos del restaurante creados`);
 
   console.log('\n✨ Seed completado exitosamente!');
   console.log(`\n📋 IDs de empresas para pruebas:`);

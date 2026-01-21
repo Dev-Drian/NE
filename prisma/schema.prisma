@@ -33,6 +33,7 @@ model Company {
   intentions   Intention[]
   reservations Reservation[]
   payments     Payment[]
+  serviceKeywords ServiceKeyword[]
   
   @@map("companies")
 }
@@ -194,5 +195,27 @@ model MessageTemplateConfig {
   updatedAt   DateTime @updatedAt
   
   @@map("message_template_configs")
+}
+
+model ServiceKeyword {
+  id          String   @id @default(uuid())
+  companyId   String?  // null = global, o específico de empresa
+  serviceKey  String   // "domicilio", "mesa", "cita"
+  keyword     String   // "pedir a domicilio", "delivery", etc.
+  type        String   @default("contains") // "exact", "contains", "regex"
+  weight      Float    @default(1.0) // 0.0-1.0 (confianza)
+  language    String   @default("es")
+  active      Boolean  @default(true)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  company     Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  
+  @@index([serviceKey])
+  @@index([companyId])
+  @@index([keyword])
+  @@index([active])
+  @@map("service_keywords")
 }
 

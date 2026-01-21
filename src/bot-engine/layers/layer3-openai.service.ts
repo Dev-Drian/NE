@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { CompaniesService } from '../../companies/companies.service';
 import { ConversationsService } from '../../conversations/conversations.service';
+import { DateUtilsService } from '../utils/date-utils.service';
+import { ContextCacheService } from '../utils/context-cache.service';
 import { DetectionResult } from '../dto/detection-result.dto';
 import OpenAI from 'openai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
@@ -16,6 +18,8 @@ export class Layer3OpenAIService {
   constructor(
     private companiesService: CompaniesService,
     private conversationsService: ConversationsService,
+    private dateUtils: DateUtilsService,
+    private contextCache: ContextCacheService,
   ) {
     const openaiKey = process.env.OPENAI_API_KEY;
     const geminiKey = process.env.GEMINI_API_KEY;
@@ -39,7 +43,12 @@ export class Layer3OpenAIService {
     companyId: string,
     userId: string,
   ): Promise<DetectionResult> {
-    const company = await this.companiesService.findOne(companyId);
+    // Usar cache para evitar consultas redundantes
+    const company = await this.contextCache.getOrLoadCompany(
+      companyId,
+      () => this.companiesService.findOne(companyId)
+    );
+    
     if (!company) {
       return {
         intention: 'otro',
@@ -48,7 +57,12 @@ export class Layer3OpenAIService {
       };
     }
 
-    const context = await this.conversationsService.getContext(userId, companyId);
+    // Usar cache para contexto
+    const contextKey = `${userId}:${companyId}`;
+    const context = await this.contextCache.getOrLoadContext(
+      contextKey,
+      () => this.conversationsService.getContext(userId, companyId)
+    );
     
     // Usar más historial de conversación para mejor contexto (últimos 15 mensajes)
     const conversationHistory = context.conversationHistory
@@ -76,45 +90,11 @@ export class Layer3OpenAIService {
     }
 
 
-    // Obtener la fecha actual de Colombia
-    // Import dinámico para evitar problemas de dependencias circulares
-    const { DateHelper } = await import('../../common/date-helper');
-    const fechaColombia = DateHelper.getTodayString();
-    const fechaColombiaLegible = DateHelper.formatDateReadable(fechaColombia);
-    
-    // Calcular mañana y pasado mañana
-    const hoy = DateHelper.getNow();
-    const manana = new Date(hoy);
-    manana.setDate(manana.getDate() + 1);
-    const pasadoManana = new Date(hoy);
-    pasadoManana.setDate(pasadoManana.getDate() + 2);
-    
-    const fechaManana = DateHelper.formatDateToISO(manana);
-    const fechaPasadoManana = DateHelper.formatDateToISO(pasadoManana);
-    
-    // Obtener nombres de días
-    const diasSemana = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
-    const diaHoy = diasSemana[hoy.getDay()];
-    const diaManana = diasSemana[manana.getDay()];
-    const diaPasadoManana = diasSemana[pasadoManana.getDay()];
-    
-    // Calcular las fechas de los próximos 7 días de la semana
-    const proximosDias: { [key: string]: string } = {};
-    const hoyDayIndex = hoy.getDay();
-    
-    for (let i = 0; i < 7; i++) {
-      const targetDayIndex = i;
-      let daysToAdd = targetDayIndex - hoyDayIndex;
-      
-      // Si el día ya pasó esta semana, agregamos 7 días para obtener el próximo
-      if (daysToAdd <= 0) {
-        daysToAdd += 7;
-      }
-      
-      const targetDate = new Date(hoy);
-      targetDate.setDate(targetDate.getDate() + daysToAdd);
-      proximosDias[diasSemana[i]] = DateHelper.formatDateToISO(targetDate);
-    }
+    // Obtener fechas de referencia usando DateUtilsService (con cache)
+    const dateRefs = await this.dateUtils.getDateReferences();
+    const { fechaColombiaLegible } = await import('../../common/date-helper').then(m => ({
+      fechaColombiaLegible: m.DateHelper.formatDateReadable(dateRefs.hoy)
+    }));
 
     // Determinar si este tipo de empresa requiere número de personas
     const config = company.config as any;
@@ -134,10 +114,10 @@ export class Layer3OpenAIService {
           
           // Sinónimos para servicios comunes
           if (key === 'domicilio' || serviceName.includes('domicilio') || serviceName.includes('delivery')) {
-            synonyms.push('pedir a domicilio', 'domicilio', 'delivery', 'a domicilio', 'envío', 'pedido a domicilio');
+            synonyms.push('pedir a domicilio', 'domicilio', 'delivery', 'a domicilio', 'envío', 'pedido a domicilio', 'quiero un domicilio', 'necesito un domicilio', 'un domicilio', 'pedir domicilio', 'domicilio para', 'que me lo traigan', 'que me lo lleven');
           }
           if (key === 'mesa' || serviceName.includes('mesa') || serviceName.includes('restaurante')) {
-            synonyms.push('mesa', 'restaurante', 'comer aquí', 'en el restaurante', 'reservar mesa');
+            synonyms.push('mesa', 'restaurante', 'comer aquí', 'en el restaurante', 'reservar mesa', 'para llevar', 'pedir para llevar', 'llevar', 'take away', 'recoger', 'pasar a recoger');
           }
           if (key === 'limpieza' || serviceName.includes('limpieza')) {
             synonyms.push('limpieza', 'limpieza dental', 'profilaxis');
@@ -150,7 +130,7 @@ export class Layer3OpenAIService {
           return `"${key}": ${value.name}${synonymsText}`;
         })
         .join('\n');
-      servicesInfo = `\n\n⚠️ SERVICIOS DISPONIBLES (elegir UNO es OBLIGATORIO - DEBES EXTRAER EL SERVICIO):\n${servicesList}\n\nIMPORTANTE: Si el usuario menciona alguna variante o sinónimo del servicio, SIEMPRE extrae la KEY correspondiente en el campo "service". Ejemplos:\n- Si el usuario dice "pedir a domicilio", "domicilio", "delivery", "a domicilio", "envío", "pedido a domicilio" → service: "domicilio"\n- Si el usuario dice "mesa", "reservar mesa", "en el restaurante", "comer aquí" → service: "mesa"\n\nSI EL USUARIO MENCIONA CUALQUIER VARIANTE DE UN SERVICIO, DEBES EXTRAERLO. NO PUEDES DEJAR service: null SI HAY UNA MENCIÓN DEL SERVICIO EN EL MENSAJE.`;
+      servicesInfo = `\n\n⚠️ SERVICIOS DISPONIBLES (elegir UNO es OBLIGATORIO - DEBES EXTRAER EL SERVICIO):\n${servicesList}\n\nIMPORTANTE: Si el usuario menciona alguna variante o sinónimo del servicio, SIEMPRE extrae la KEY correspondiente en el campo "service". Ejemplos:\n- Si el usuario dice "pedir a domicilio", "domicilio", "delivery", "a domicilio", "envío", "pedido a domicilio", "quiero un domicilio", "necesito un domicilio", "un domicilio", "que me lo traigan", "que me lo lleven" → service: "domicilio"\n- Si el usuario dice "mesa", "restaurante", "comer aquí", "en el restaurante", "reservar mesa", "para llevar", "pedir para llevar", "llevar", "take away", "recoger", "pasar a recoger" → service: "mesa"\n\nATENCIÓN ESPECIAL:\n- "pedir para llevar" o "para llevar" significa recoger en el restaurante → service: "mesa" (NO "domicilio")\n- "quiero un domicilio" o "que me lo traigan" → service: "domicilio"\n- Si el usuario dice "NO quiero que me lo traigan" o "NO quiero domicilio" → service: "mesa" (cambiar de domicilio a mesa)\n\nSI EL USUARIO MENCIONA CUALQUIER VARIANTE DE UN SERVICIO, DEBES EXTRAERLO. NO PUEDES DEJAR service: null SI HAY UNA MENCIÓN DEL SERVICIO EN EL MENSAJE.`;
     }
     
     // Crear lista de productos disponibles (para que la IA pueda extraer lo que piden)
@@ -163,18 +143,18 @@ export class Layer3OpenAIService {
     const prompt = `Analiza este mensaje de un cliente y responde SOLO con un JSON válido (sin markdown, sin código, solo JSON):
 
 FECHAS DE REFERENCIA (MUY IMPORTANTE - USA ESTAS EXACTAMENTE):
-- HOY: ${fechaColombia} (${diaHoy})
-- MAÑANA: ${fechaManana} (${diaManana})
-- PASADO MAÑANA: ${fechaPasadoManana} (${diaPasadoManana})
+- HOY: ${dateRefs.hoy} (${dateRefs.diaHoy})
+- MAÑANA: ${dateRefs.manana} (${dateRefs.diaManana})
+- PASADO MAÑANA: ${dateRefs.pasadoManana} (${dateRefs.diaPasadoManana})
 
 PRÓXIMOS DÍAS DE LA SEMANA (si el usuario menciona solo el nombre del día):
-- Próximo lunes: ${proximosDias['lunes']}
-- Próximo martes: ${proximosDias['martes']}
-- Próximo miércoles: ${proximosDias['miércoles']}
-- Próximo jueves: ${proximosDias['jueves']}
-- Próximo viernes: ${proximosDias['viernes']}
-- Próximo sábado: ${proximosDias['sábado']}
-- Próximo domingo: ${proximosDias['domingo']}
+- Próximo lunes: ${dateRefs.proximosDias['lunes']}
+- Próximo martes: ${dateRefs.proximosDias['martes']}
+- Próximo miércoles: ${dateRefs.proximosDias['miércoles']}
+- Próximo jueves: ${dateRefs.proximosDias['jueves']}
+- Próximo viernes: ${dateRefs.proximosDias['viernes']}
+- Próximo sábado: ${dateRefs.proximosDias['sábado']}
+- Próximo domingo: ${dateRefs.proximosDias['domingo']}
 
 Contexto: Cliente de ${company.name} (tipo: ${company.type})
 Mensaje: "${message}"${servicesInfo}${productsInfo}
@@ -187,12 +167,12 @@ INSTRUCCIONES CRÍTICAS:
 1. EXTRACCIÓN DE DATOS - EXTRAE TODO LO QUE ENCUENTRES EN EL MENSAJE:
    
    FECHAS (usar formato YYYY-MM-DD - USA LAS FECHAS DE REFERENCIA):
-   - "hoy" → ${fechaColombia}
-   - "mañana" → ${fechaManana}
-   - "pasado mañana" → ${fechaPasadoManana}
+   - "hoy" → ${dateRefs.hoy}
+   - "mañana" → ${dateRefs.manana}
+   - "pasado mañana" → ${dateRefs.pasadoManana}
    - Si dice solo "lunes", "martes", "viernes", etc → Usa el PRÓXIMO día de la lista de PRÓXIMOS DÍAS DE LA SEMANA
-   - "el viernes" → ${proximosDias['viernes']}
-   - "para el lunes" → ${proximosDias['lunes']}
+   - "el viernes" → ${dateRefs.proximosDias['viernes']}
+   - "para el lunes" → ${dateRefs.proximosDias['lunes']}
    
    HORAS (usar formato HH:MM en 24 horas):
    - "4 PM", "4 de la tarde", "las 4" (tarde) → "16:00"
@@ -204,7 +184,7 @@ INSTRUCCIONES CRÍTICAS:
    - "mi numero es 45353535" → phone: "45353535"
    - "llamame al 3001234567" → phone: "3001234567"
    
-   ${hasMultipleServices ? '⚠️ SERVICIO (MUY IMPORTANTE - OBLIGATORIO): Debes SIEMPRE extraer el servicio mencionado usando la KEY exacta de la lista de SERVICIOS DISPONIBLES arriba. Busca cualquier mención del servicio en el mensaje del usuario:\n   - Si el usuario dice "pedir a domicilio", "domicilio", "delivery", "a domicilio", "envío", "pedido a domicilio" → service: "domicilio"\n   - Si el usuario dice "mesa", "reservar mesa", "en el restaurante", "comer aquí", "mesa en restaurante" → service: "mesa"\n   - Si el usuario dice variantes de "limpieza" o "consulta" → busca la key correspondiente\n   - SIEMPRE busca coincidencias con las keys y sinónimos listados en SERVICIOS DISPONIBLES\n   - NO dejes service: null si hay cualquier mención de un servicio en el mensaje' : ''}
+   ${hasMultipleServices ? '⚠️ SERVICIO (MUY IMPORTANTE - OBLIGATORIO): Debes SIEMPRE extraer el servicio mencionado usando la KEY exacta de la lista de SERVICIOS DISPONIBLES arriba. Busca cualquier mención del servicio en el mensaje del usuario:\n   - Si el usuario dice "pedir a domicilio", "domicilio", "delivery", "a domicilio", "envío", "pedido a domicilio", "quiero un domicilio", "necesito un domicilio", "un domicilio", "que me lo traigan", "que me lo lleven" → service: "domicilio"\n   - Si el usuario dice "mesa", "restaurante", "comer aquí", "en el restaurante", "reservar mesa", "para llevar", "pedir para llevar", "llevar", "take away", "recoger", "pasar a recoger" → service: "mesa"\n   - Si el usuario dice "NO quiero que me lo traigan", "NO quiero domicilio", "no quiero que me la traigan" → service: "mesa" (cambiar de domicilio a mesa)\n   - Si el usuario dice variantes de "limpieza" o "consulta" → busca la key correspondiente\n   - ATENCIÓN: "pedir para llevar" o "para llevar" significa recoger en el restaurante → service: "mesa" (NO "domicilio")\n   - SIEMPRE busca coincidencias con las keys y sinónimos listados en SERVICIOS DISPONIBLES\n   - NO dejes service: null si hay cualquier mención de un servicio en el mensaje' : ''}
    PERSONAS/COMENSALES: ${isClinicType ? 'NO extraer - las clínicas y spas NO necesitan número de personas (siempre es 1)' : '"para 2", "somos 4", "2 personas" → guests: número'}
 
 2. DETECTAR INTENCIÓN:
