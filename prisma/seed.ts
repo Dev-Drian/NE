@@ -23,7 +23,7 @@ async function main() {
       description: 'Restaurante italiano especializado en pasta y pizza',
       phone: '+34 912 345 678',
       active: true,
-      // Configuración de Wompi TEST
+      // Configuración de Wompi TEST (sandbox)
       requiresPayment: true,
       paymentPercentage: 50, // 50% de anticipo
       wompiPublicKey: 'pub_test_AnjRyoWHPu9UW2X3AsXdz5tWyRAljVfU',
@@ -114,7 +114,7 @@ async function main() {
       description: 'Clínica dental especializada en ortodoncia y estética dental',
       phone: '+34 911 222 333',
       active: true,
-      // Configuración de Wompi TEST
+      // Configuración de Wompi TEST (sandbox)
       requiresPayment: true,
       paymentPercentage: 100, // 100% pago anticipado
       wompiPublicKey: 'pub_test_AnjRyoWHPu9UW2X3AsXdz5tWyRAljVfU',

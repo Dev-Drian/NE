@@ -104,13 +104,69 @@ export class WompiService {
     payload: any,
   ): boolean {
     try {
-      const concatenated = `${timestamp}.${JSON.stringify(payload)}`;
+      // Wompi calcula la firma usando solo las propiedades especificadas en signature.properties
+      // y el timestamp del payload
+      const signatureObj = payload?.signature;
+      const timestampFromPayload = payload?.timestamp?.toString() || timestamp;
+      
+      if (!signatureObj || !signatureObj.properties) {
+        this.logger.warn('⚠️ No hay signature.properties en el payload, usando método simple');
+        // Fallback: usar todo el payload (método anterior)
+        const concatenated = `${timestampFromPayload}.${JSON.stringify(payload)}`;
+        const expectedSignature = crypto
+          .createHmac('sha256', eventsSecret)
+          .update(concatenated)
+          .digest('hex');
+        return signature === expectedSignature;
+      }
+
+      // Construir string con los valores en el orden especificado en properties
+      const transaction = payload?.data?.transaction || {};
+      const values: any[] = [];
+      
+      signatureObj.properties.forEach((prop: string) => {
+        // Propiedades como "transaction.id" se acceden como transaction.id
+        const keys = prop.split('.');
+        if (keys[0] === 'transaction' && keys.length > 1) {
+          const transactionKey = keys[1];
+          const value = transaction[transactionKey];
+          if (value !== undefined && value !== null) {
+            // Convertir a string para asegurar consistencia
+            values.push(String(value));
+          }
+        } else {
+          const value = payload[prop] !== undefined ? payload[prop] : payload?.data?.[prop];
+          if (value !== undefined && value !== null) {
+            values.push(String(value));
+          }
+        }
+      });
+
+      // Concatenar: timestamp.valor1.valor2.valor3
+      const concatenated = `${timestampFromPayload}.${values.join('.')}`;
+      
+      this.logger.log('🔐 Propiedades usadas para firma:', JSON.stringify(signatureObj.properties));
+      this.logger.log('🔐 Valores extraídos:', JSON.stringify(values));
+      this.logger.log('🔐 String concatenado:', concatenated);
+      this.logger.log('🔐 Events Secret (primeros 10 chars):', eventsSecret?.substring(0, 10));
+      
       const expectedSignature = crypto
         .createHmac('sha256', eventsSecret)
         .update(concatenated)
         .digest('hex');
 
-      return signature === expectedSignature;
+      const isValid = signature === expectedSignature;
+      
+      if (!isValid) {
+        this.logger.error('❌ Firma no coincide');
+        this.logger.log('🔐 Firma esperada (calculada):', expectedSignature);
+        this.logger.log('🔐 Firma recibida (del webhook):', signature);
+        this.logger.log('🔐 Diferencia:', signature.length, 'vs', expectedSignature.length);
+      } else {
+        this.logger.log('✅ Firma válida');
+      }
+
+      return isValid;
     } catch (error) {
       this.logger.error('Error verifying signature:', error);
       return false;
