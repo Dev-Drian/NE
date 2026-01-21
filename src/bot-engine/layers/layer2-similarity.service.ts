@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { IntentionsService } from '../../intentions/intentions.service';
 import { DetectionResult } from '../dto/detection-result.dto';
+import { CONFIDENCE_THRESHOLDS } from '../constants/detection.constants';
 
 @Injectable()
 export class Layer2SimilarityService {
@@ -27,7 +28,7 @@ export class Layer2SimilarityService {
       }
     }
 
-    if (bestMatch && bestSimilarity >= 0.6) {
+    if (bestMatch && bestSimilarity >= CONFIDENCE_THRESHOLDS.MEDIUM) {
       return bestMatch;
     }
 

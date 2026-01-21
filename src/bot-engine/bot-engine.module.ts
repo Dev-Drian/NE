@@ -7,6 +7,12 @@ import { TextUtilsService } from './utils/text-utils.service';
 import { ContextCacheService } from './utils/context-cache.service';
 import { DateUtilsService } from './utils/date-utils.service';
 import { KeywordDetectorService } from './utils/keyword-detector.service';
+import { CircuitBreakerService } from './utils/circuit-breaker.service';
+import { GreetingHandler } from './handlers/greeting.handler';
+import { CancelHandler } from './handlers/cancel.handler';
+import { QueryHandler } from './handlers/query.handler';
+import { ReservationHandler } from './handlers/reservation.handler';
+import { MetricsService } from './utils/metrics.service';
 import { IntentionsModule } from '../intentions/intentions.module';
 import { CompaniesModule } from '../companies/companies.module';
 import { ConversationsModule } from '../conversations/conversations.module';
@@ -38,6 +44,12 @@ import { KeywordsModule } from '../keywords/keywords.module';
     ContextCacheService,
     DateUtilsService,
     KeywordDetectorService,
+    CircuitBreakerService,
+    GreetingHandler,
+    CancelHandler,
+    QueryHandler,
+    ReservationHandler,
+    MetricsService,
   ],
   exports: [BotEngineService],
 })

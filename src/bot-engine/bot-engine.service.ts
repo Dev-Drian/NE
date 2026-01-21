@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { Layer1KeywordsService } from './layers/layer1-keywords.service';
 import { Layer2SimilarityService } from './layers/layer2-similarity.service';
 import { Layer3OpenAIService } from './layers/layer3-openai.service';
@@ -15,6 +15,11 @@ import { ContextCacheService } from './utils/context-cache.service';
 import { KeywordDetectorService } from './utils/keyword-detector.service';
 import { ProcessMessageDto } from './dto/process-message.dto';
 import { DetectionResult } from './dto/detection-result.dto';
+import { CONFIDENCE_THRESHOLDS } from './constants/detection.constants';
+import { GreetingHandler } from './handlers/greeting.handler';
+import { CancelHandler } from './handlers/cancel.handler';
+import { QueryHandler } from './handlers/query.handler';
+import { ReservationHandler } from './handlers/reservation.handler';
 
 export interface ProcessMessageResponse {
   reply: string;
@@ -44,6 +49,11 @@ export class BotEngineService {
     private textUtils: TextUtilsService,
     private contextCache: ContextCacheService,
     private keywordDetector: KeywordDetectorService,
+    private greetingHandler: GreetingHandler,
+    private cancelHandler: CancelHandler,
+    private queryHandler: QueryHandler,
+    @Inject(forwardRef(() => ReservationHandler))
+    private reservationHandler: ReservationHandler,
   ) {}
 
   async processMessage(dto: ProcessMessageDto): Promise<ProcessMessageResponse> {
@@ -76,20 +86,22 @@ export class BotEngineService {
         }
       }
 
-      // 3. Cargar contexto desde Redis (con cache)
+      // 3. Invalidar cache ANTES de operaciones de escritura para evitar race conditions
       const contextKey = `${userId}:${dto.companyId}`;
+      await this.contextCache.invalidateContext(contextKey);
+      
+      // 4. Cargar contexto desde Redis (con cache) - ahora garantizamos datos frescos
       const context = await this.contextCache.getOrLoadContext(
         contextKey,
         () => this.conversations.getContext(userId, dto.companyId)
       );
 
-      // 4. Agregar mensaje del usuario al historial
+      // 5. Agregar mensaje del usuario al historial
+      // Invalidar cache antes de escribir para evitar que otros procesos lean datos obsoletos
+      await this.contextCache.invalidateContext(contextKey);
       await this.conversations.addMessage(userId, dto.companyId, 'user', dto.message);
-      
-      // Invalidar cache de contexto después de agregar mensaje
-      this.contextCache.invalidateContext(contextKey);
 
-      // 5. LÓGICA CONTEXTUAL: Si estamos en modo "collecting" con intención "reservar"
+      // 6. LÓGICA CONTEXTUAL: Si estamos en modo "collecting" con intención "reservar"
       // debemos forzar la continuidad de la reserva, PERO solo si el mensaje no es un saludo
       const isContinuingReservation = 
         context.stage === 'collecting' && context.lastIntention === 'reservar';
@@ -210,7 +222,7 @@ export class BotEngineService {
     );
 
     // Si encontramos un match con buena confianza, usarlo
-    if (keywordMatch && keywordMatch.confidence >= 0.8) {
+    if (keywordMatch && keywordMatch.confidence >= CONFIDENCE_THRESHOLDS.HIGH) {
       // Usar OpenAI para extraer otros datos (fecha, hora, etc.) pero usar el servicio del keyword
       const layer3Detection = await this.layer3.detect(
         dto.message,
@@ -257,7 +269,7 @@ export class BotEngineService {
       // Solo forzar intención a "reservar" si no es una consulta clara
       if (!hasConsultaKeywords) {
         detection.intention = 'reservar';
-        detection.confidence = Math.max(detection.confidence, 0.7);
+        detection.confidence = Math.max(detection.confidence, CONFIDENCE_THRESHOLDS.MEDIUM);
       }
     } else {
       // Flujo normal: intentar capas 1, 2, 3
@@ -265,7 +277,7 @@ export class BotEngineService {
       detection = await this.layer1.detect(dto.message, dto.companyId);
 
       // 5. Si no hay confianza suficiente → CAPA 2
-      if (detection.confidence < 0.85) {
+      if (detection.confidence < CONFIDENCE_THRESHOLDS.HIGH) {
         const layer2Detection = await this.layer2.detect(dto.message, dto.companyId);
         if (layer2Detection.confidence > detection.confidence) {
           detection = layer2Detection;
@@ -289,9 +301,10 @@ export class BotEngineService {
         if (layer3Detection.suggestedReply) {
           detection.suggestedReply = layer3Detection.suggestedReply;
         }
-      } else if (detection.confidence < 0.6 || detection.intention === 'consultar') {
-        // Si aún no hay confianza → CAPA 3 (OpenAI)
-        // También usar OpenAI para consultas para extraer fecha/hora si están presentes
+      } else if (detection.confidence < CONFIDENCE_THRESHOLDS.MEDIUM || detection.intention === 'consultar') {
+        // Si aún no hay confianza suficiente O es una consulta → CAPA 3 (OpenAI)
+        // Para consultas, usar OpenAI para extraer fecha/hora si están presentes
+        // Optimización: No llamar OpenAI si ya tenemos alta confianza (>= 0.85) y no es reserva/consulta
         const layer3Detection = await this.layer3.detect(dto.message, dto.companyId, userId);
         if (layer3Detection.confidence > detection.confidence || detection.intention === 'consultar') {
           // Mantener intención "consultar" pero usar datos extraídos de OpenAI
@@ -304,6 +317,7 @@ export class BotEngineService {
           }
         }
       }
+      // Si confidence >= HIGH (0.85) y no es reservar/consultar, no llamar OpenAI (optimización)
     }
 
     // 7. Si se detectó un teléfono en los datos extraídos, crear/actualizar usuario
@@ -323,21 +337,24 @@ export class BotEngineService {
       }
     }
 
-    // 9. Procesar según intención
+    // 9. Procesar según intención usando handlers
     let reply: string;
     let newState = { ...context };
 
+    const handlerContext = {
+      detection,
+      context,
+      dto,
+      company,
+      userId,
+    };
+
     if (detection.intention === 'saludar') {
-      reply = await this.messagesTemplates.getGreeting(company.type, company.name);
-      // Resetear contexto completamente cuando es un saludo (inicia nueva conversación)
-      newState = {
-        stage: 'idle',
-        collectedData: {},
-        conversationHistory: context.conversationHistory, // Mantener historial pero resetear estado
-        lastIntention: undefined,
-      };
+      const result = await this.greetingHandler.handle(handlerContext);
+      reply = result.reply;
+      newState = result.newState;
     } else if (detection.intention === 'reservar') {
-      const result = await this.handleReservation(detection, context, { ...dto, userId }, company.type);
+      const result = await this.reservationHandler.handle(handlerContext);
       reply = result.reply;
       newState = result.newState;
       // Usar los missingFields calculados si están disponibles
@@ -345,74 +362,35 @@ export class BotEngineService {
         detection.missingFields = result.missingFields;
       }
     } else if (detection.intention === 'cancelar') {
-      reply = detection.suggestedReply || await this.messagesTemplates.getReservationCancel(company.type);
-      newState.stage = 'idle';
+      const result = await this.cancelHandler.handle(handlerContext);
+      reply = result.reply;
+      newState = result.newState;
     } else if (detection.intention === 'consultar') {
-      const config = company.config as any;
-      const hoursText = this.formatHours(config?.hours);
-      
-      // Si preguntan por servicios y hay servicios configurados, mostrarlos
-      const askingAboutServices = this.keywordDetector.asksForProducts(dto.message);
-      
-      // Verificar si la consulta incluye fecha/hora específica (consulta de disponibilidad)
-      const extracted = detection.extractedData || {};
-      const hasSpecificDate = extracted.date !== null && extracted.date !== undefined;
-      const hasSpecificTime = extracted.time !== null && extracted.time !== undefined;
-      
-      // Si tiene fecha/hora específica, verificar disponibilidad real
-      if (hasSpecificDate && hasSpecificTime) {
-        const available = await this.availability.check(dto.companyId, {
-          date: extracted.date!,
-          time: extracted.time!,
-          guests: extracted.guests || 1,
-          userId: userId,
-          service: extracted.service,
-        });
-        
-        if (available.isAvailable) {
-          const dateReadable = await import('../common/date-helper').then(m => m.DateHelper.formatDateReadable(extracted.date!));
-          reply = `✅ Sí, tenemos disponibilidad para el ${dateReadable} a las ${extracted.time}. ¿Te gustaría hacer una reserva?`;
-        } else {
-          reply = available.message || 'No hay disponibilidad en ese horario.';
-          if (available.alternatives && available.alternatives.length > 0) {
-            reply += ` ¿Te sirve ${available.alternatives[0]}?`;
-          }
-        }
-      } else if (askingAboutServices && config?.services) {
-        const servicesList = Object.entries(config.services)
-          .map(([key, value]: [string, any]) => `• ${value.name}`)
-          .join('\n');
-        reply = `Ofrecemos los siguientes servicios:\n\n${servicesList}\n\n¿Te gustaría agendar una cita?`;
-      } else {
-        reply = detection.suggestedReply || await this.messagesTemplates.getReservationQuery(company.type, hoursText);
-      }
-      
-      // NO resetear stage si estamos en medio de una reserva
-      // Solo cambiar a idle si no estábamos recopilando datos
-      if (context.stage !== 'collecting') {
-        newState.stage = 'idle';
-      }
+      const result = await this.queryHandler.handle(handlerContext);
+      reply = result.reply;
+      newState = result.newState;
     } else {
+      // Fallback para otras intenciones
       reply = detection.suggestedReply || await this.messagesTemplates.getError(company.type);
       newState.stage = 'idle';
     }
 
-    // 10. Guardar estado actualizado
-    await this.conversations.saveContext(userId, dto.companyId, newState);
+    // 10. Invalidar cache ANTES de guardar para evitar race conditions
+    await this.contextCache.invalidateContext(contextKey);
     
-    // Invalidar cache de contexto después de guardar cambios
-    this.contextCache.invalidateContext(contextKey);
+    // 11. Guardar estado actualizado
+    await this.conversations.saveContext(userId, dto.companyId, newState);
 
-    // 11. Agregar respuesta al historial
+      // 12. Agregar respuesta al historial
     await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
 
-    // 12. Si la reserva se completó, crear/buscar conversación en BD para pagos
+      // 13. Si la reserva se completó, crear/buscar conversación en BD para pagos
     let conversationId = `${userId}_${dto.companyId}`;
     if (newState.stage === 'completed' && detection.intention === 'reservar') {
       conversationId = await this.conversations.findOrCreateConversation(userId, dto.companyId);
     }
 
-    // 13. Retornar respuesta
+      // 14. Retornar respuesta
     return {
       reply,
       intention: detection.intention,
@@ -422,7 +400,10 @@ export class BotEngineService {
       conversationId,
     };
     } catch (error) {
-      this.logger.error('Error en processMessage:', error);
+      this.logger.error(
+        `Error en processMessage - userId: ${dto.userId}, companyId: ${dto.companyId}, message: ${dto.message?.substring(0, 50)}`,
+        error.stack || error.message,
+      );
       // Retornar respuesta de error genérica
       return {
         reply: 'Lo siento, hubo un error procesando tu mensaje. Por favor intenta de nuevo.',
@@ -433,7 +414,7 @@ export class BotEngineService {
     }
   }
 
-  private async handleReservation(
+  async handleReservation(
     detection: DetectionResult,
     context: any,
     dto: ProcessMessageDto,

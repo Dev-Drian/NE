@@ -1,8 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { CompaniesService } from '../../companies/companies.service';
 import { ConversationsService } from '../../conversations/conversations.service';
 import { DateUtilsService } from '../utils/date-utils.service';
 import { ContextCacheService } from '../utils/context-cache.service';
+import { CircuitBreakerService } from '../utils/circuit-breaker.service';
+import { Layer2SimilarityService } from './layer2-similarity.service';
 import { DetectionResult } from '../dto/detection-result.dto';
 import OpenAI from 'openai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
@@ -11,6 +13,7 @@ type AIProvider = 'openai' | 'gemini';
 
 @Injectable()
 export class Layer3OpenAIService {
+  private readonly logger = new Logger(Layer3OpenAIService.name);
   private openai: OpenAI | null = null;
   private gemini: GoogleGenerativeAI | null = null;
   private activeProvider: AIProvider;
@@ -20,6 +23,8 @@ export class Layer3OpenAIService {
     private conversationsService: ConversationsService,
     private dateUtils: DateUtilsService,
     private contextCache: ContextCacheService,
+    private circuitBreaker: CircuitBreakerService,
+    private layer2: Layer2SimilarityService,
   ) {
     const openaiKey = process.env.OPENAI_API_KEY;
     const geminiKey = process.env.GEMINI_API_KEY;
@@ -214,12 +219,33 @@ Responde SOLO con este JSON:
 }`;
 
     try {
+      // Verificar si el circuit breaker está abierto antes de intentar
+      if (this.circuitBreaker.getState() === 'OPEN') {
+        this.logger.warn('Circuit breaker is OPEN, using Layer2 as fallback');
+        return await this.layer2.detect(message, companyId);
+      }
+
+      // Usar circuit breaker para proteger llamadas a OpenAI/Gemini
       let content: string | null = null;
 
-      if (this.activeProvider === 'openai' && this.openai) {
-        content = await this.callOpenAI(prompt);
-      } else if (this.activeProvider === 'gemini' && this.gemini) {
-        content = await this.callGemini(prompt);
+      try {
+        // Envolver llamada a AI con circuit breaker
+        const aiCall = async (): Promise<string> => {
+          if (this.activeProvider === 'openai' && this.openai) {
+            return await this.callOpenAI(prompt);
+          } else if (this.activeProvider === 'gemini' && this.gemini) {
+            return await this.callGemini(prompt);
+          }
+          throw new Error('No AI provider available');
+        };
+
+        // Si hay fallback definido pero el circuit breaker está abierto, 
+        // el execute lanzará error, así que lo manejamos
+        content = await this.circuitBreaker.execute(aiCall);
+      } catch (error) {
+        // Si el circuit breaker bloqueó la operación o falló, usar Layer2
+        this.logger.warn(`AI provider call failed, using Layer2 fallback: ${error.message}`);
+        return await this.layer2.detect(message, companyId);
       }
 
       if (!content) {
@@ -355,7 +381,10 @@ Responde SOLO con este JSON:
         suggestedReply: parsed.suggestedReply || 'No entendí. ¿Puedes reformular?',
       };
     } catch (error) {
-      console.error(`Error en ${this.activeProvider}:`, error);
+      this.logger.error(
+        `Error en ${this.activeProvider} - companyId: ${companyId}, userId: ${userId}, message: ${message?.substring(0, 50)}`,
+        error.stack || error.message,
+      );
       return {
         intention: 'otro',
         confidence: 0,
