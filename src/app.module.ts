@@ -9,6 +9,7 @@ import { AvailabilityModule } from './availability/availability.module';
 import { BotEngineModule } from './bot-engine/bot-engine.module';
 import { MessagesModule } from './messages/messages.module';
 import { PaymentsModule } from './payments/payments.module';
+import { BotGraphQLModule } from './graphql/graphql.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { PaymentsModule } from './payments/payments.module';
     BotEngineModule,
     MessagesModule,
     PaymentsModule,
+    BotGraphQLModule,
   ],
 })
 export class AppModule {}

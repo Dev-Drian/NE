@@ -32,6 +32,7 @@ import { ServiceRegistryService } from './services/service-registry.service';
 import { ReservationFlowService } from './handlers/reservation/reservation-flow.service';
 import { PromptBuilderService } from './layers/prompt-builder.service';
 import { ResourceValidatorService } from './services/resource-validator.service';
+import { StateMachineService } from './services/state-machine.service';
 
 @Module({
   imports: [
@@ -76,7 +77,9 @@ import { ResourceValidatorService } from './services/resource-validator.service'
     PromptBuilderService,
     // Validador de recursos (mesas, productos, etc.)
     ResourceValidatorService,
+    // State Machine (fuente única de verdad)
+    StateMachineService,
   ],
-  exports: [BotEngineService],
+  exports: [BotEngineService, StateMachineService],
 })
 export class BotEngineModule {}

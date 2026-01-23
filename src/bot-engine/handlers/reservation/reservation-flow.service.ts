@@ -205,12 +205,38 @@ export class ReservationFlowService {
     if (missing.length > 0) {
       const missingFieldsSpanish = missing.map((f) => resolution.missingFieldLabels[f] || f);
 
-      const reply = await this.messagesTemplates.getDynamicReservationResponse(
-        companyType,
-        collected,
-        newData,
-        missingFieldsSpanish,
-      );
+      // ENFOQUE HÍBRIDO: Preguntar todos la primera vez, luego uno a uno
+      const hasAskedAllFields = context.metadata?.hasAskedAllFields || false;
+      
+      let reply: string;
+      
+      if (missing.length === 1) {
+        // Solo falta 1 campo → preguntar ese específico (más natural)
+        reply = await this.askForSingleField(
+          missing[0],
+          collected,
+          newData,
+          resolution.missingFieldLabels[missing[0]] || missing[0],
+          companyType,
+        );
+      } else if (!hasAskedAllFields) {
+        // Primera vez con múltiples campos faltantes → preguntar todos de una vez
+        reply = await this.askForAllFields(
+          missingFieldsSpanish,
+          collected,
+          newData,
+          companyType,
+        );
+      } else {
+        // Ya preguntamos todos antes → preguntar el primero que falta (uno a uno)
+        reply = await this.askForSingleField(
+          missing[0],
+          collected,
+          newData,
+          resolution.missingFieldLabels[missing[0]] || missing[0],
+          companyType,
+        );
+      }
 
       return {
         reply,
@@ -219,6 +245,11 @@ export class ReservationFlowService {
           collectedData: collected,
           stage: 'collecting',
           lastIntention: 'reservar',
+          metadata: {
+            ...context.metadata,
+            hasAskedAllFields: missing.length > 1 && !hasAskedAllFields,
+            lastFieldAsked: missing[0],
+          },
         },
         missingFields: missingFieldsSpanish,
       };
@@ -473,6 +504,150 @@ export class ReservationFlowService {
         },
       };
     }
+  }
+
+  /**
+   * Pregunta por un solo campo específico (enfoque uno a uno)
+   */
+  private async askForSingleField(
+    fieldKey: string,
+    collected: any,
+    newData: any,
+    fieldLabel: string,
+    companyType: string,
+  ): Promise<string> {
+    const terminology = await this.messagesTemplates.getTerminology(companyType);
+    const isDomicilio = collected.service === 'domicilio';
+    const reservationType = isDomicilio ? 'pedido' : terminology.reservation;
+
+    // Construir confirmación de datos que ya tenemos
+    const confirmedParts: string[] = [];
+    
+    if (collected.date && !newData.date) {
+      const dateReadable = DateHelper.formatDateReadable(collected.date);
+      confirmedParts.push(`📅 Fecha: ${dateReadable}`);
+    }
+    
+    if (collected.time && !newData.time) {
+      const timeReadable = DateHelper.formatTimeReadable(collected.time);
+      confirmedParts.push(`🕐 Hora: ${timeReadable}`);
+    }
+    
+    if (collected.guests && !newData.guests) {
+      const peopleText = collected.guests === 1 ? terminology.person : terminology.people;
+      confirmedParts.push(`👥 ${collected.guests} ${peopleText}`);
+    }
+
+    // Construir pregunta contextualizada
+    let question = '';
+    switch (fieldKey) {
+      case 'date':
+        question = '¿Para qué fecha la necesitas?';
+        break;
+      case 'time':
+        if (collected.date) {
+          const dateReadable = DateHelper.formatDateReadable(collected.date);
+          question = `Perfecto, ${dateReadable}. ¿A qué hora?`;
+        } else {
+          question = '¿A qué hora?';
+        }
+        break;
+      case 'guests':
+        if (collected.date && collected.time) {
+          const dateReadable = DateHelper.formatDateReadable(collected.date);
+          const timeReadable = DateHelper.formatTimeReadable(collected.time);
+          question = `Excelente, ${dateReadable} a las ${timeReadable}. ¿Para cuántas ${terminology.people}?`;
+        } else {
+          question = `¿Para cuántas ${terminology.people}?`;
+        }
+        break;
+      case 'phone':
+        question = `¿Puedes darme tu número de teléfono para confirmar tu ${reservationType}?`;
+        break;
+      case 'name':
+        question = `¿Cuál es tu nombre?`;
+        break;
+      case 'products':
+        question = `¿Qué productos deseas pedir?`;
+        break;
+      case 'address':
+        question = `¿Cuál es la dirección de entrega?`;
+        break;
+      default:
+        question = `Necesito ${fieldLabel.toLowerCase()} para continuar.`;
+    }
+
+    // Si hay datos confirmados, mostrarlos primero
+    if (confirmedParts.length > 0) {
+      return `¡Perfecto! Tengo anotado:\n${confirmedParts.join('\n')}\n\n${question}`;
+    }
+
+    return question;
+  }
+
+  /**
+   * Pregunta por todos los campos faltantes de una vez (primera vez)
+   * La IA luego determinará qué campo es cada respuesta
+   */
+  private async askForAllFields(
+    missingFieldsSpanish: string[],
+    collected: any,
+    newData: any,
+    companyType: string,
+  ): Promise<string> {
+    const terminology = await this.messagesTemplates.getTerminology(companyType);
+    const isDomicilio = collected.service === 'domicilio';
+    const reservationType = isDomicilio ? 'pedido' : terminology.reservation;
+
+    const parts: string[] = [];
+
+    // Si hay datos nuevos, confirmarlos
+    const receivedParts: string[] = [];
+    if (newData.date) {
+      const dateReadable = DateHelper.formatDateReadable(newData.date);
+      receivedParts.push(`📅 Fecha: ${dateReadable}`);
+    }
+    if (newData.time) {
+      const timeReadable = DateHelper.formatTimeReadable(newData.time);
+      receivedParts.push(`🕐 Hora: ${timeReadable}`);
+    }
+    if (newData.guests) {
+      const peopleText = newData.guests === 1 ? terminology.person : terminology.people;
+      receivedParts.push(`👥 ${newData.guests} ${peopleText}`);
+    }
+    if (newData.phone) {
+      receivedParts.push(`📱 Teléfono: ${newData.phone}`);
+    }
+
+    if (receivedParts.length > 0) {
+      parts.push(`¡Perfecto! Tengo anotado:\n${receivedParts.join('\n')}`);
+    }
+
+    // Preguntar todos los campos faltantes
+    const questions = missingFieldsSpanish.map((field, index) => {
+      // Mapear campos en español a preguntas específicas
+      const fieldLower = field.toLowerCase();
+      if (fieldLower.includes('fecha') || fieldLower === 'date') {
+        return `${index + 1}. ¿Para qué fecha?`;
+      } else if (fieldLower.includes('hora') || fieldLower === 'time') {
+        return `${index + 1}. ¿A qué hora?`;
+      } else if (fieldLower.includes('persona') || fieldLower.includes('comensal') || fieldLower === 'guests') {
+        return `${index + 1}. ¿Para cuántas ${terminology.people}?`;
+      } else if (fieldLower.includes('teléfono') || fieldLower.includes('telefono') || fieldLower === 'phone') {
+        return `${index + 1}. ¿Tu número de teléfono?`;
+      } else if (fieldLower.includes('producto') || fieldLower === 'products') {
+        return `${index + 1}. ¿Qué productos deseas?`;
+      } else if (fieldLower.includes('dirección') || fieldLower.includes('direccion') || fieldLower === 'address') {
+        return `${index + 1}. ¿Cuál es la dirección de entrega?`;
+      } else {
+        return `${index + 1}. ${field}`;
+      }
+    });
+
+    parts.push(`Para confirmar tu ${reservationType}, necesito:\n${questions.join('\n')}`);
+    parts.push(`\n💡 Puedes darme todos los datos de una vez o uno por uno. La IA entenderá qué es cada cosa 😊`);
+
+    return parts.join('\n\n');
   }
 }
 

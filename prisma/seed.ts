@@ -6,7 +6,10 @@ async function main() {
   console.log('🌱 Iniciando seed...');
 
   // Limpiar datos anteriores (opcional - solo para desarrollo)
+  // IMPORTANTE: Eliminar en orden para evitar foreign key constraints
+  await prisma.payment.deleteMany();
   await prisma.reservation.deleteMany();
+  await prisma.conversation.deleteMany();
   await prisma.intentionExample.deleteMany();
   await prisma.intentionPattern.deleteMany();
   await prisma.intention.deleteMany();
