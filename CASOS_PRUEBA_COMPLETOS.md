@@ -36,20 +36,20 @@ Los IDs se generan automáticamente al ejecutar el seed. Para obtenerlos:
 - **Servicios disponibles:**
   - `mesa`: Mesa en restaurante (sin pago anticipado, sin productos)
   - `domicilio`: Servicio a domicilio (con pago anticipado, requiere productos, envío $5.000, mínimo $20.000)
-- **ID real:** `d7ee0f53-4823-4a60-8421-58948e5ac5b5` ✅
+- **ID real:** `9d8f8e58-f900-40d4-ba00-86ef2abcc578` ✅
 
 #### 2. Clínica Dental Sonrisas
 - **Tipo:** `clinic`
 - **Servicios disponibles:**
   - `cita`: Cita en clínica (con pago anticipado, requiere tratamiento)
 - **Tratamientos:** Limpieza dental, Consulta general, Ortodoncia, Blanqueamiento, etc.
-- **ID real:** `f259d74c-841e-44a4-b6bb-fa622c2498d2` ✅
+- **ID real:** `e939e465-fc10-433e-b9ec-02456544a775` ✅
 
 ### IDs de Usuarios de Prueba
 
-- **Juan Pérez:** `d9155265-a393-4ce2-a00b-e1cedec0ba36` (tel: 612345678) ✅
-- **María García:** `c57b469a-bb1b-4e4a-b7da-75dd376c1374` (tel: 698765432) ✅
-- **Carlos López:** `e78db803-0e9e-4b5a-bfb1-056dfd5fb32e` (tel: 611223344) ✅
+- **Juan Pérez:** `88f74e75-8727-4607-a234-4c425bf7f677` (tel: 612345678) ✅
+- **María García:** `57a5c8c0-62d5-4ad5-93db-643760d5d4d5` (tel: 698765432) ✅
+- **Carlos López:** `50b58af4-5dda-42bb-971a-072da5d810cc` (tel: 611223344) ✅
 
 > **Nota:** Estos usuarios se crean automáticamente en el seed. Si necesitas más usuarios, consulta `prisma/seed.ts`.
 
@@ -62,8 +62,8 @@ Los IDs se generan automáticamente al ejecutar el seed. Para obtenerlos:
 **Paso 1.1: Saludo inicial**
 ```json
 {
-  "companyId": "d7ee0f53-4823-4a60-8421-58948e5ac5b5",
-  "userId": "d9155265-a393-4ce2-a00b-e1cedec0ba36",
+  "companyId": "9d8f8e58-f900-40d4-ba00-86ef2abcc578",
+  "userId": "88f74e75-8727-4607-a234-4c425bf7f677",
   "message": "hola, buenas tardes"
 }
 ```
@@ -76,8 +76,8 @@ Los IDs se generan automáticamente al ejecutar el seed. Para obtenerlos:
 **Paso 1.2: Consulta de menú**
 ```json
 {
-  "companyId": "d7ee0f53-4823-4a60-8421-58948e5ac5b5",
-  "userId": "d9155265-a393-4ce2-a00b-e1cedec0ba36",
+  "companyId": "9d8f8e58-f900-40d4-ba00-86ef2abcc578",
+  "userId": "88f74e75-8727-4607-a234-4c425bf7f677",
   "message": "qué tienen en el menú?"
 }
 ```
@@ -90,8 +90,8 @@ Los IDs se generan automáticamente al ejecutar el seed. Para obtenerlos:
 **Paso 1.3: Solicitud de domicilio**
 ```json
 {
-  "companyId": "d7ee0f53-4823-4a60-8421-58948e5ac5b5",
-  "userId": "d9155265-a393-4ce2-a00b-e1cedec0ba36",
+  "companyId": "9d8f8e58-f900-40d4-ba00-86ef2abcc578",
+  "userId": "88f74e75-8727-4607-a234-4c425bf7f677",
   "message": "quiero un domicilio para hoy"
 }
 ```
@@ -107,8 +107,8 @@ Los IDs se generan automáticamente al ejecutar el seed. Para obtenerlos:
 **Paso 1.4: Proporciona hora**
 ```json
 {
-  "companyId": "d7ee0f53-4823-4a60-8421-58948e5ac5b5",
-  "userId": "d9155265-a393-4ce2-a00b-e1cedec0ba36",
+  "companyId": "9d8f8e58-f900-40d4-ba00-86ef2abcc578",
+  "userId": "88f74e75-8727-4607-a234-4c425bf7f677",
   "message": "para las 8 de la noche"
 }
 ```
@@ -123,8 +123,8 @@ Los IDs se generan automáticamente al ejecutar el seed. Para obtenerlos:
 **Paso 1.5: Selecciona productos**
 ```json
 {
-  "companyId": "d7ee0f53-4823-4a60-8421-58948e5ac5b5",
-  "userId": "d9155265-a393-4ce2-a00b-e1cedec0ba36",
+  "companyId": "9d8f8e58-f900-40d4-ba00-86ef2abcc578",
+  "userId": "88f74e75-8727-4607-a234-4c425bf7f677",
   "message": "quiero una pizza margherita y una coca cola"
 }
 ```
@@ -139,8 +139,8 @@ Los IDs se generan automáticamente al ejecutar el seed. Para obtenerlos:
 **Paso 1.6: Proporciona teléfono**
 ```json
 {
-  "companyId": "d7ee0f53-4823-4a60-8421-58948e5ac5b5",
-  "userId": "d9155265-a393-4ce2-a00b-e1cedec0ba36",
+  "companyId": "9d8f8e58-f900-40d4-ba00-86ef2abcc578",
+  "userId": "88f74e75-8727-4607-a234-4c425bf7f677",
   "message": "mi teléfono es 612345678"
 }
 ```
@@ -160,8 +160,8 @@ Los IDs se generan automáticamente al ejecutar el seed. Para obtenerlos:
 **Paso 2.1: Inicia conversación**
 ```json
 {
-  "companyId": "d7ee0f53-4823-4a60-8421-58948e5ac5b5",
-  "userId": "c57b469a-bb1b-4e4a-b7da-75dd376c1374",
+  "companyId": "9d8f8e58-f900-40d4-ba00-86ef2abcc578",
+  "userId": "57a5c8c0-62d5-4ad5-93db-643760d5d4d5",
   "message": "buenos días"
 }
 ```
@@ -172,8 +172,8 @@ Los IDs se generan automáticamente al ejecutar el seed. Para obtenerlos:
 **Paso 2.2: Consulta disponibilidad**
 ```json
 {
-  "companyId": "d7ee0f53-4823-4a60-8421-58948e5ac5b5",
-  "userId": "c57b469a-bb1b-4e4a-b7da-75dd376c1374",
+  "companyId": "9d8f8e58-f900-40d4-ba00-86ef2abcc578",
+  "userId": "57a5c8c0-62d5-4ad5-93db-643760d5d4d5",
   "message": "hay disponibilidad para el sábado a las 8pm?"
 }
 ```
@@ -189,8 +189,8 @@ Los IDs se generan automáticamente al ejecutar el seed. Para obtenerlos:
 **Paso 2.3: Decide reservar**
 ```json
 {
-  "companyId": "d7ee0f53-4823-4a60-8421-58948e5ac5b5",
-  "userId": "c57b469a-bb1b-4e4a-b7da-75dd376c1374",
+  "companyId": "9d8f8e58-f900-40d4-ba00-86ef2abcc578",
+  "userId": "57a5c8c0-62d5-4ad5-93db-643760d5d4d5",
   "message": "sí, quiero reservar una mesa para ese día"
 }
 ```
@@ -207,8 +207,8 @@ Los IDs se generan automáticamente al ejecutar el seed. Para obtenerlos:
 **Paso 2.4: Proporciona datos faltantes**
 ```json
 {
-  "companyId": "d7ee0f53-4823-4a60-8421-58948e5ac5b5",
-  "userId": "c57b469a-bb1b-4e4a-b7da-75dd376c1374",
+  "companyId": "9d8f8e58-f900-40d4-ba00-86ef2abcc578",
+  "userId": "57a5c8c0-62d5-4ad5-93db-643760d5d4d5",
   "message": "somos 3 personas y mi teléfono es 698765432"
 }
 ```
@@ -230,8 +230,8 @@ Los IDs se generan automáticamente al ejecutar el seed. Para obtenerlos:
 **Paso 3.1: Inicia reserva de mesa**
 ```json
 {
-  "companyId": "d7ee0f53-4823-4a60-8421-58948e5ac5b5",
-  "userId": "d9155265-a393-4ce2-a00b-e1cedec0ba36",
+  "companyId": "9d8f8e58-f900-40d4-ba00-86ef2abcc578",
+  "userId": "88f74e75-8727-4607-a234-4c425bf7f677",
   "message": "quiero reservar una mesa para mañana"
 }
 ```
@@ -247,8 +247,8 @@ Los IDs se generan automáticamente al ejecutar el seed. Para obtenerlos:
 **Paso 3.2: Cambia a domicilio**
 ```json
 {
-  "companyId": "d7ee0f53-4823-4a60-8421-58948e5ac5b5",
-  "userId": "d9155265-a393-4ce2-a00b-e1cedec0ba36",
+  "companyId": "9d8f8e58-f900-40d4-ba00-86ef2abcc578",
+  "userId": "88f74e75-8727-4607-a234-4c425bf7f677",
   "message": "mejor quiero un pedido a domicilio"
 }
 ```
@@ -268,8 +268,8 @@ Los IDs se generan automáticamente al ejecutar el seed. Para obtenerlos:
 **Paso 4.1: Cancela reserva**
 ```json
 {
-  "companyId": "d7ee0f53-4823-4a60-8421-58948e5ac5b5",
-  "userId": "d9155265-a393-4ce2-a00b-e1cedec0ba36",
+  "companyId": "9d8f8e58-f900-40d4-ba00-86ef2abcc578",
+  "userId": "88f74e75-8727-4607-a234-4c425bf7f677",
   "message": "quiero cancelar mi reserva"
 }
 ```
@@ -285,8 +285,8 @@ Los IDs se generan automáticamente al ejecutar el seed. Para obtenerlos:
 **Paso 4.2: Hace nueva reserva después**
 ```json
 {
-  "companyId": "d7ee0f53-4823-4a60-8421-58948e5ac5b5",
-  "userId": "d9155265-a393-4ce2-a00b-e1cedec0ba36",
+  "companyId": "9d8f8e58-f900-40d4-ba00-86ef2abcc578",
+  "userId": "88f74e75-8727-4607-a234-4c425bf7f677",
   "message": "quiero hacer una nueva reserva para el viernes"
 }
 ```
@@ -305,8 +305,8 @@ Los IDs se generan automáticamente al ejecutar el seed. Para obtenerlos:
 **Paso 5.1: Consulta disponibilidad con fecha**
 ```json
 {
-  "companyId": "d7ee0f53-4823-4a60-8421-58948e5ac5b5",
-  "userId": "c57b469a-bb1b-4e4a-b7da-75dd376c1374",
+  "companyId": "9d8f8e58-f900-40d4-ba00-86ef2abcc578",
+  "userId": "57a5c8c0-62d5-4ad5-93db-643760d5d4d5",
   "message": "hay disponibilidad para el domingo?"
 }
 ```
@@ -326,8 +326,8 @@ Los IDs se generan automáticamente al ejecutar el seed. Para obtenerlos:
 **Paso 6.1: Consulta Restaurante**
 ```json
 {
-  "companyId": "d7ee0f53-4823-4a60-8421-58948e5ac5b5",
-  "userId": "d9155265-a393-4ce2-a00b-e1cedec0ba36",
+  "companyId": "9d8f8e58-f900-40d4-ba00-86ef2abcc578",
+  "userId": "88f74e75-8727-4607-a234-4c425bf7f677",
   "message": "qué tienen de menú?"
 }
 ```
@@ -338,8 +338,8 @@ Los IDs se generan automáticamente al ejecutar el seed. Para obtenerlos:
 **Paso 6.2: Consulta Clínica Dental (diferente empresa)**
 ```json
 {
-  "companyId": "f259d74c-841e-44a4-b6bb-fa622c2498d2",
-  "userId": "d9155265-a393-4ce2-a00b-e1cedec0ba36",
+  "companyId": "e939e465-fc10-433e-b9ec-02456544a775",
+  "userId": "88f74e75-8727-4607-a234-4c425bf7f677",
   "message": "hola, qué servicios tienen?"
 }
 ```
@@ -357,8 +357,8 @@ Los IDs se generan automáticamente al ejecutar el seed. Para obtenerlos:
 **Paso 7.1: Saludo**
 ```json
 {
-  "companyId": "d7ee0f53-4823-4a60-8421-58948e5ac5b5",
-  "userId": "c57b469a-bb1b-4e4a-b7da-75dd376c1374",
+  "companyId": "9d8f8e58-f900-40d4-ba00-86ef2abcc578",
+  "userId": "57a5c8c0-62d5-4ad5-93db-643760d5d4d5",
   "message": "hola"
 }
 ```
@@ -369,8 +369,8 @@ Los IDs se generan automáticamente al ejecutar el seed. Para obtenerlos:
 **Paso 7.2: Consulta horarios**
 ```json
 {
-  "companyId": "d7ee0f53-4823-4a60-8421-58948e5ac5b5",
-  "userId": "c57b469a-bb1b-4e4a-b7da-75dd376c1374",
+  "companyId": "9d8f8e58-f900-40d4-ba00-86ef2abcc578",
+  "userId": "57a5c8c0-62d5-4ad5-93db-643760d5d4d5",
   "message": "qué horarios tienen?"
 }
 ```
@@ -381,8 +381,8 @@ Los IDs se generan automáticamente al ejecutar el seed. Para obtenerlos:
 **Paso 7.3: Consulta menú**
 ```json
 {
-  "companyId": "d7ee0f53-4823-4a60-8421-58948e5ac5b5",
-  "userId": "c57b469a-bb1b-4e4a-b7da-75dd376c1374",
+  "companyId": "9d8f8e58-f900-40d4-ba00-86ef2abcc578",
+  "userId": "57a5c8c0-62d5-4ad5-93db-643760d5d4d5",
   "message": "y qué tienen de comida?"
 }
 ```
@@ -393,8 +393,8 @@ Los IDs se generan automáticamente al ejecutar el seed. Para obtenerlos:
 **Paso 7.4: Consulta disponibilidad**
 ```json
 {
-  "companyId": "d7ee0f53-4823-4a60-8421-58948e5ac5b5",
-  "userId": "c57b469a-bb1b-4e4a-b7da-75dd376c1374",
+  "companyId": "9d8f8e58-f900-40d4-ba00-86ef2abcc578",
+  "userId": "57a5c8c0-62d5-4ad5-93db-643760d5d4d5",
   "message": "tienen mesa para mañana sábado a las 8?"
 }
 ```
@@ -407,8 +407,8 @@ Los IDs se generan automáticamente al ejecutar el seed. Para obtenerlos:
 **Paso 7.5: Reserva**
 ```json
 {
-  "companyId": "d7ee0f53-4823-4a60-8421-58948e5ac5b5",
-  "userId": "c57b469a-bb1b-4e4a-b7da-75dd376c1374",
+  "companyId": "9d8f8e58-f900-40d4-ba00-86ef2abcc578",
+  "userId": "57a5c8c0-62d5-4ad5-93db-643760d5d4d5",
   "message": "perfecto, quiero reservar para 4 personas, mi teléfono es 698765432"
 }
 ```
@@ -430,8 +430,8 @@ Los IDs se generan automáticamente al ejecutar el seed. Para obtenerlos:
 **Paso 8.1: Pedido completo**
 ```json
 {
-  "companyId": "d7ee0f53-4823-4a60-8421-58948e5ac5b5",
-  "userId": "d9155265-a393-4ce2-a00b-e1cedec0ba36",
+  "companyId": "9d8f8e58-f900-40d4-ba00-86ef2abcc578",
+  "userId": "88f74e75-8727-4607-a234-4c425bf7f677",
   "message": "quiero un domicilio para hoy a las 7pm, quiero 2 pizzas pepperoni, una lasagna y 3 coca colas, teléfono 612345678"
 }
 ```
@@ -454,8 +454,8 @@ Los IDs se generan automáticamente al ejecutar el seed. Para obtenerlos:
 **Paso 9.1: Inicia reserva**
 ```json
 {
-  "companyId": "d7ee0f53-4823-4a60-8421-58948e5ac5b5",
-  "userId": "c57b469a-bb1b-4e4a-b7da-75dd376c1374",
+  "companyId": "9d8f8e58-f900-40d4-ba00-86ef2abcc578",
+  "userId": "57a5c8c0-62d5-4ad5-93db-643760d5d4d5",
   "message": "quiero reservar una mesa para mañana a las 8 para 2 personas"
 }
 ```
@@ -473,8 +473,8 @@ Los IDs se generan automáticamente al ejecutar el seed. Para obtenerlos:
 **Paso 9.2: Corrige hora**
 ```json
 {
-  "companyId": "d7ee0f53-4823-4a60-8421-58948e5ac5b5",
-  "userId": "c57b469a-bb1b-4e4a-b7da-75dd376c1374",
+  "companyId": "9d8f8e58-f900-40d4-ba00-86ef2abcc578",
+  "userId": "57a5c8c0-62d5-4ad5-93db-643760d5d4d5",
   "message": "mejor a las 9 de la noche"
 }
 ```
@@ -490,8 +490,8 @@ Los IDs se generan automáticamente al ejecutar el seed. Para obtenerlos:
 **Paso 9.3: Corrige número de personas**
 ```json
 {
-  "companyId": "d7ee0f53-4823-4a60-8421-58948e5ac5b5",
-  "userId": "c57b469a-bb1b-4e4a-b7da-75dd376c1374",
+  "companyId": "9d8f8e58-f900-40d4-ba00-86ef2abcc578",
+  "userId": "57a5c8c0-62d5-4ad5-93db-643760d5d4d5",
   "message": "somos 3 personas en realidad"
 }
 ```
@@ -511,8 +511,8 @@ Los IDs se generan automáticamente al ejecutar el seed. Para obtenerlos:
 **Paso 10.1: Saludo**
 ```json
 {
-  "companyId": "f259d74c-841e-44a4-b6bb-fa622c2498d2",
-  "userId": "d9155265-a393-4ce2-a00b-e1cedec0ba36",
+  "companyId": "e939e465-fc10-433e-b9ec-02456544a775",
+  "userId": "88f74e75-8727-4607-a234-4c425bf7f677",
   "message": "buenos días"
 }
 ```
@@ -523,8 +523,8 @@ Los IDs se generan automáticamente al ejecutar el seed. Para obtenerlos:
 **Paso 10.2: Consulta servicios**
 ```json
 {
-  "companyId": "f259d74c-841e-44a4-b6bb-fa622c2498d2",
-  "userId": "d9155265-a393-4ce2-a00b-e1cedec0ba36",
+  "companyId": "e939e465-fc10-433e-b9ec-02456544a775",
+  "userId": "88f74e75-8727-4607-a234-4c425bf7f677",
   "message": "qué servicios tienen?"
 }
 ```
@@ -535,8 +535,8 @@ Los IDs se generan automáticamente al ejecutar el seed. Para obtenerlos:
 **Paso 10.3: Solicita cita**
 ```json
 {
-  "companyId": "f259d74c-841e-44a4-b6bb-fa622c2498d2",
-  "userId": "d9155265-a393-4ce2-a00b-e1cedec0ba36",
+  "companyId": "e939e465-fc10-433e-b9ec-02456544a775",
+  "userId": "88f74e75-8727-4607-a234-4c425bf7f677",
   "message": "quiero una cita para limpieza dental"
 }
 ```
@@ -552,8 +552,8 @@ Los IDs se generan automáticamente al ejecutar el seed. Para obtenerlos:
 **Paso 10.4: Proporciona fecha y hora**
 ```json
 {
-  "companyId": "f259d74c-841e-44a4-b6bb-fa622c2498d2",
-  "userId": "d9155265-a393-4ce2-a00b-e1cedec0ba36",
+  "companyId": "e939e465-fc10-433e-b9ec-02456544a775",
+  "userId": "88f74e75-8727-4607-a234-4c425bf7f677",
   "message": "para el próximo lunes a las 10 de la mañana"
 }
 ```

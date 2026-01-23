@@ -231,7 +231,7 @@ async function main() {
       companyType: 'restaurant',
       active: true,
       templates: {
-        greeting: '¡Hola! Bienvenido a {{companyName}}. ¿En qué puedo ayudarte? Puedo ayudarte a hacer una reserva o resolver cualquier duda que tengas.',
+        greeting: '¡Hola! Bienvenido a {{companyName}}. ¿En qué puedo ayudarte?\n\nPuedo ayudarte a:\n• Reservar una mesa 🪑\n• Pedir domicilio 🏠\n• Consultar nuestro menú 📋',
         reservationRequest: 'Perfecto, me encantaría ayudarte con tu reserva. Para continuar, necesito que me proporciones: {{fields}}',
         reservationConfirm: '✅ Reserva confirmada para el {{date}} a las {{time}} para {{guests}} {{peopleText}}. Te contactaremos al {{phone}}.',
         reservationCancel: 'Para cancelar tu reserva, necesito más información.',

@@ -194,7 +194,7 @@ ${reservationsText.join('\n')}
           return `"${key}": ${value.name}${synonymsText}`;
         })
         .join('\n');
-      servicesInfo = `\n\n⚠️ SERVICIOS DISPONIBLES (elegir UNO es OBLIGATORIO - DEBES EXTRAER EL SERVICIO):\n${servicesList}\n\nIMPORTANTE: Si el usuario menciona alguna variante o sinónimo del servicio, SIEMPRE extrae la KEY correspondiente en el campo "service". Ejemplos:\n- Si el usuario dice "pedir a domicilio", "domicilio", "delivery", "a domicilio", "envío", "pedido a domicilio", "quiero un domicilio", "necesito un domicilio", "un domicilio", "que me lo traigan", "que me lo lleven" → service: "domicilio"\n- Si el usuario dice "mesa", "restaurante", "comer aquí", "en el restaurante", "reservar mesa", "para llevar", "pedir para llevar", "llevar", "take away", "recoger", "pasar a recoger" → service: "mesa"\n\nATENCIÓN ESPECIAL:\n- "pedir para llevar" o "para llevar" significa recoger en el restaurante → service: "mesa" (NO "domicilio")\n- "quiero un domicilio" o "que me lo traigan" → service: "domicilio"\n- Si el usuario dice "NO quiero que me lo traigan" o "NO quiero domicilio" → service: "mesa" (cambiar de domicilio a mesa)\n\nSI EL USUARIO MENCIONA CUALQUIER VARIANTE DE UN SERVICIO, DEBES EXTRAERLO. NO PUEDES DEJAR service: null SI HAY UNA MENCIÓN DEL SERVICIO EN EL MENSAJE.`;
+      servicesInfo = `\n\n⚠️ SERVICIOS DISPONIBLES (elegir UNO es OBLIGATORIO - DEBES EXTRAER EL SERVICIO):\n${servicesList}\n\nIMPORTANTE: Si el usuario menciona alguna variante o sinónimo del servicio, SIEMPRE extrae la KEY correspondiente en el campo "service". Ejemplos:\n- Si el usuario dice "pedir a domicilio", "domicilio", "delivery", "a domicilio", "envío", "pedido a domicilio", "quiero un domicilio", "necesito un domicilio", "un domicilio", "que me lo traigan", "que me lo lleven" → service: "domicilio"\n- Si el usuario dice "mesa", "restaurante", "comer aquí", "en el restaurante", "reservar mesa", "para llevar", "pedir para llevar", "llevar", "take away", "recoger", "pasar a recoger" → service: "mesa"\n\nATENCIÓN ESPECIAL - DETECCIÓN DE SERVICIO:\n- "domicilio", "delivery", "a domicilio", "envío", "que me lo traigan", "que me lo lleven", "llevar a casa" → service: "domicilio"\n- "para llevar" o "pedir para llevar" significa recoger en el local → service: "mesa" (NO es domicilio)\n- "mesa", "restaurante", "comer aquí", "en el local", "reservar mesa", "recoger" → service: "mesa"\n- Si el usuario dice "NO quiero que me lo traigan" o "NO quiero domicilio" → service: "mesa" (cambiar explícitamente)\n- Si el usuario dice "cita", "consulta", "revisión", "tratamiento" → service: "cita" (solo para clínicas/spas)\n\nREGLA CRÍTICA: SI EL USUARIO MENCIONA CUALQUIER VARIANTE DE UN SERVICIO, DEBES EXTRAERLO. NO DEJES service: null SI HAY UNA MENCIÓN EXPLÍCITA DEL SERVICIO.`;
     }
     
     // Crear lista de productos disponibles (para que la IA pueda extraer lo que piden)
@@ -228,20 +228,26 @@ ${currentStateInfo}${contextualInfo}
 
 INSTRUCCIONES CRÍTICAS:
 
-1. EXTRACCIÓN DE DATOS - EXTRAE TODO LO QUE ENCUENTRES EN EL MENSAJE:
+1. EXTRACCIÓN DE DATOS - EXTRAE **SOLO** LO QUE EL USUARIO MENCIONA EXPLÍCITAMENTE:
    
    FECHAS (usar formato YYYY-MM-DD - USA LAS FECHAS DE REFERENCIA):
+   - **IMPORTANTE**: Solo extraer si el usuario menciona una fecha explícitamente
+   - Si NO menciona fecha → date: null
    - "hoy" → ${dateRefs.hoy}
    - "mañana" → ${dateRefs.manana}
    - "pasado mañana" → ${dateRefs.pasadoManana}
    - Si dice solo "lunes", "martes", "viernes", etc → Usa el PRÓXIMO día de la lista de PRÓXIMOS DÍAS DE LA SEMANA
    - "el viernes" → ${dateRefs.proximosDias['viernes']}
    - "para el lunes" → ${dateRefs.proximosDias['lunes']}
+   - Si solo menciona hora SIN fecha → date: null (NO asumas hoy automáticamente)
    
    HORAS (usar formato HH:MM en 24 horas):
+   - **IMPORTANTE**: Solo extraer si el usuario menciona una hora explícitamente
+   - Si NO menciona hora → time: null
    - "4 PM", "4 de la tarde", "las 4" (tarde) → "16:00"
    - "8 PM", "8 de la noche" → "20:00"
    - "9 AM", "9 de la mañana" → "09:00"
+   - "9 PM" → "21:00"
    - "mediodía" → "12:00"
    
    TELÉFONO: Extrae cualquier secuencia de números que parezca teléfono (8-10 dígitos)
@@ -249,6 +255,17 @@ INSTRUCCIONES CRÍTICAS:
    - "llamame al 3001234567" → phone: "3001234567"
    
    ${hasMultipleServices ? '⚠️ SERVICIO (MUY IMPORTANTE - OBLIGATORIO): Debes SIEMPRE extraer el servicio mencionado usando la KEY exacta de la lista de SERVICIOS DISPONIBLES arriba. Busca cualquier mención del servicio en el mensaje del usuario:\n   - Si el usuario dice "pedir a domicilio", "domicilio", "delivery", "a domicilio", "envío", "pedido a domicilio", "quiero un domicilio", "necesito un domicilio", "un domicilio", "que me lo traigan", "que me lo lleven" → service: "domicilio"\n   - Si el usuario dice "mesa", "restaurante", "comer aquí", "en el restaurante", "reservar mesa", "para llevar", "pedir para llevar", "llevar", "take away", "recoger", "pasar a recoger" → service: "mesa"\n   - Si el usuario dice "NO quiero que me lo traigan", "NO quiero domicilio", "no quiero que me la traigan" → service: "mesa" (cambiar de domicilio a mesa)\n   - Si el usuario dice variantes de "limpieza" o "consulta" → busca la key correspondiente\n   - ATENCIÓN: "pedir para llevar" o "para llevar" significa recoger en el restaurante → service: "mesa" (NO "domicilio")\n   - SIEMPRE busca coincidencias con las keys y sinónimos listados en SERVICIOS DISPONIBLES\n   - NO dejes service: null si hay cualquier mención de un servicio en el mensaje' : ''}
+   
+   PRODUCTOS CON CANTIDADES (CRÍTICO - EXTRAER CANTIDADES):
+   - **IMPORTANTE**: Extrae PRODUCTOS y sus CANTIDADES del mensaje
+   - Formato: Array de objetos con {id: "prod-X", quantity: número}
+   - Ejemplos:
+     * "2 pizzas margherita" → [{id: "prod-1", quantity: 2}]
+     * "quiero una pizza y 3 cocas" → [{id: "prod-1", quantity: 1}, {id: "prod-9", quantity: 3}]
+     * "4 lasagnas y 2 vinos tintos" → [{id: "prod-8", quantity: 4}, {id: "prod-11", quantity: 2}]
+   - Si NO menciona cantidad, usar quantity: 1
+   - Busca en la lista de PRODUCTOS DISPONIBLES los IDs correctos
+   
    PERSONAS/COMENSALES: ${isClinicType ? 'NO extraer - las clínicas y spas NO necesitan número de personas (siempre es 1)' : '"para 2", "somos 4", "2 personas" → guests: número'}
 
 2. DETECTAR INTENCIÓN (ANALIZA EL CONTEXTO COMPLETO):

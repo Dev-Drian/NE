@@ -17,6 +17,7 @@ export class QueryHandler implements IIntentionHandler {
 
     const config = company.config as any;
     const hoursText = this.formatHours(config?.hours);
+    let reply: string;
     
     // PRIORIDAD 1: Si OpenAI generó un suggestedReply con contexto relevante, usarlo
     // OpenAI ya analizó pagos pendientes, reservas activas, historial completo
@@ -42,15 +43,57 @@ export class QueryHandler implements IIntentionHandler {
       }
     }
     
-    // PRIORIDAD 2: Si preguntan por servicios y hay servicios configurados, mostrarlos
-    const askingAboutServices = this.keywordDetector.asksForProducts(dto.message);
+    // PRIORIDAD 2: Si preguntan por productos/servicios/menú, mostrar lista completa
+    const askingAboutProducts = this.keywordDetector.asksForProducts(dto.message);
+    
+    if (askingAboutProducts) {
+      // Mostrar servicios disponibles
+      if (config?.services && Object.keys(config.services).length > 0) {
+        const servicesList = Object.entries(config.services)
+          .map(([key, value]: [string, any]) => `• ${value.name}`)
+          .join('\n');
+        reply = `Ofrecemos los siguientes servicios:\n\n${servicesList}`;
+      } else {
+        reply = '';
+      }
+      
+      // Mostrar productos disponibles si existen
+      if (config?.products && Array.isArray(config.products) && config.products.length > 0) {
+        const productsList = config.products
+          .map((p: any) => {
+            const price = new Intl.NumberFormat('es-CO', { 
+              style: 'currency', 
+              currency: 'COP', 
+              minimumFractionDigits: 0 
+            }).format(p.price || 0);
+            return `• ${p.name} - ${price}`;
+          })
+          .join('\n');
+        
+        if (reply) {
+          reply += `\n\n🍔 **Menú/Productos:**\n${productsList}`;
+        } else {
+          reply = `🍔 **Menú/Productos disponibles:**\n\n${productsList}`;
+        }
+      }
+      
+      if (reply) {
+        reply += '\n\n¿Qué te gustaría pedir? 😊';
+        
+        return {
+          reply,
+          newState: {
+            ...conversationContext,
+            stage: conversationContext.stage !== 'collecting' ? ('idle' as const) : conversationContext.stage,
+          },
+        };
+      }
+    }
     
     // PRIORIDAD 3: Verificar si la consulta incluye fecha/hora específica (consulta de disponibilidad)
     const extracted = detection.extractedData || {};
     const hasSpecificDate = extracted.date !== null && extracted.date !== undefined;
     const hasSpecificTime = extracted.time !== null && extracted.time !== undefined;
-    
-    let reply: string;
     
     // Si tiene fecha/hora específica, verificar disponibilidad real
     if (hasSpecificDate && hasSpecificTime) {
@@ -71,11 +114,6 @@ export class QueryHandler implements IIntentionHandler {
           reply += ` ¿Te sirve ${available.alternatives[0]}?`;
         }
       }
-    } else if (askingAboutServices && config?.services) {
-      const servicesList = Object.entries(config.services)
-        .map(([key, value]: [string, any]) => `• ${value.name}`)
-        .join('\n');
-      reply = `Ofrecemos los siguientes servicios:\n\n${servicesList}\n\n¿Te gustaría agendar una cita?`;
     } else {
       // Fallback: usar suggestedReply de OpenAI o respuesta genérica
       reply = detection.suggestedReply || await this.messagesTemplates.getReservationQuery(company.type, hoursText);

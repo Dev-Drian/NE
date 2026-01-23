@@ -50,6 +50,37 @@ export class ReservationsService {
       },
     });
   }
+
+  async findByUser(
+    userId: string,
+    companyId: string,
+    options?: {
+      limit?: number;
+      fromDate?: Date;
+      service?: string;
+    }
+  ): Promise<Reservation[]> {
+    const where: any = {
+      userId,
+      companyId,
+    };
+
+    if (options?.fromDate) {
+      where.createdAt = {
+        gte: options.fromDate,
+      };
+    }
+
+    if (options?.service) {
+      where.service = options.service;
+    }
+
+    return this.prisma.reservation.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: options?.limit || 10,
+    });
+  }
 }
 
 

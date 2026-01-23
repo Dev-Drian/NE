@@ -93,7 +93,7 @@ npm run prisma:seed
 ### Generar cliente Prisma
 ```bash
 npm run prisma:generate
-```
+```asdsdsa
 
 ### Abrir Prisma Studio (interfaz visual)
 ```bash

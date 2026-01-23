@@ -87,7 +87,16 @@ export class PaymentsService {
       throw new NotFoundException('Payment not found');
     }
 
+    // Si no hay wompiTransactionId, el usuario aún no ha completado el pago en Wompi
+    // Retornar el estado actual de la base de datos (probablemente PENDING)
     if (!payment.wompiTransactionId) {
+      this.logger.log(`Payment ${paymentId} has no transaction ID yet - user hasn't paid`);
+      return payment;
+    }
+
+    // Si ya está aprobado, no necesitamos consultar Wompi de nuevo
+    if (payment.status === 'APPROVED') {
+      this.logger.log(`Payment ${paymentId} already approved`);
       return payment;
     }
 
@@ -116,6 +125,13 @@ export class PaymentsService {
 
       return updatedPayment;
     } catch (error) {
+      // Si Wompi responde 404, significa que la transacción aún no existe
+      // Retornar el pago con su estado actual (PENDING)
+      if (error?.response?.status === 404) {
+        this.logger.warn(`Transaction not found in Wompi for payment ${paymentId} - user hasn't completed payment yet`);
+        return payment;
+      }
+      
       this.logger.error('Error checking payment status:', error);
       throw error;
     }
@@ -219,6 +235,32 @@ export class PaymentsService {
         status: 'PENDING',
       },
       orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async getPaymentsByUser(userId: string, companyId: string) {
+    // Obtener todas las conversaciones del usuario con la empresa
+    const conversations = await this.prisma.conversation.findMany({
+      where: {
+        userId,
+        companyId,
+      },
+      select: { id: true },
+    });
+
+    const conversationIds = conversations.map(c => c.id);
+
+    if (conversationIds.length === 0) {
+      return [];
+    }
+
+    // Buscar todos los pagos de esas conversaciones
+    return this.prisma.payment.findMany({
+      where: {
+        conversationId: { in: conversationIds },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 20, // Limitar a 20 pagos más recientes
     });
   }
 }

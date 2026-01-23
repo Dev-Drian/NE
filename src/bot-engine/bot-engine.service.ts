@@ -20,6 +20,7 @@ import { GreetingHandler } from './handlers/greeting.handler';
 import { CancelHandler } from './handlers/cancel.handler';
 import { QueryHandler } from './handlers/query.handler';
 import { ReservationHandler } from './handlers/reservation.handler';
+import { DateHelper } from '../common/date-helper';
 
 export interface ProcessMessageResponse {
   reply: string;
@@ -109,12 +110,69 @@ export class BotEngineService {
       // Usar KeywordDetectorService para detecciones (centralizado, sin duplicación)
       const lowerMessage = dto.message.toLowerCase();
       const isGreeting = this.keywordDetector.isGreeting(dto.message);
+      const isFarewell = this.keywordDetector.isFarewell(dto.message);
       const asksForProducts = this.keywordDetector.asksForProducts(dto.message);
+      const asksAboutDelivery = this.keywordDetector.asksAboutDelivery(dto.message);
       const asksParaLlevar = this.keywordDetector.asksParaLlevar(dto.message);
       const hasConsultaKeywords = this.keywordDetector.hasConsultaKeywords(dto.message) && !asksForProducts;
       const asksForPrice = this.keywordDetector.asksForPrice(dto.message);
     
-    if (asksForPrice && !isContinuingReservation) {
+    // Si el usuario se despide o agradece (sin hacer otra pregunta), responder amablemente
+    // CRÍTICO: Hacer esto ANTES de continuar con flujos de reserva
+    if (isFarewell && !hasConsultaKeywords && !asksForProducts && !asksAboutDelivery && !asksForPrice) {
+      const reply = '¡De nada! Fue un placer atenderte. Si necesitas algo más, no dudes en escribirme. 😊';
+      await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
+      // Resetear contexto para nueva conversación
+      await this.conversations.saveContext(userId, dto.companyId, {
+        stage: 'idle',
+        collectedData: {},
+        conversationHistory: [],
+      });
+      return {
+        reply,
+        intention: 'otro',
+        confidence: 1.0,
+        conversationState: 'idle',
+      };
+    }
+
+    // Si pregunta sobre disponibilidad de domicilio, responder informativamente
+    if (asksAboutDelivery) {
+      const config = company.config as any;
+      const services = config?.services || {};
+      const domicilioService = services['domicilio'];
+      
+      if (domicilioService && domicilioService.enabled) {
+        let reply = '¡Sí! Hacemos domicilios. 🚚\n\n';
+        if (domicilioService.deliveryFee) {
+          reply += `💰 Costo de envío: $${domicilioService.deliveryFee.toLocaleString('es-CO')}\n`;
+        }
+        if (domicilioService.minOrderAmount) {
+          reply += `📦 Pedido mínimo: $${domicilioService.minOrderAmount.toLocaleString('es-CO')}\n`;
+        }
+        reply += '\n¿Te gustaría hacer un pedido a domicilio? 😊';
+        
+        await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
+        return {
+          reply,
+          intention: 'consultar',
+          confidence: 1.0,
+          conversationState: context.stage,
+        };
+      } else {
+        const reply = 'Lo siento, actualmente no contamos con servicio de domicilio. 😔';
+        await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
+        return {
+          reply,
+          intention: 'consultar',
+          confidence: 1.0,
+          conversationState: context.stage,
+        };
+      }
+    }
+
+    // Priorizar consultas de precio SIEMPRE (incluso si hay reserva activa)
+    if (asksForPrice) {
       const config = company.config as any;
       const products = config?.products || [];
       
@@ -351,10 +409,370 @@ export class BotEngineService {
       }
     }
 
-    // 9. Procesar según intención usando handlers
+    // 8. Declarar variable reply para usar en todo el flujo
     let reply: string;
     let newState = { ...context };
 
+    // 9. CONSULTAR HISTORIAL si el usuario pregunta por sus pedidos/reservas anteriores
+    if (this.keywordDetector.asksForHistory(dto.message)) {
+      try {
+        // Buscar reservas confirmadas del usuario en los últimos 90 días
+        const ninetyDaysAgo = new Date();
+        ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+        
+        const reservations = await this.reservations.findByUser(userId, dto.companyId, {
+          limit: 10,
+          fromDate: ninetyDaysAgo,
+        });
+        
+        // Buscar TODOS los pagos del usuario (pendientes, aprobados, rechazados)
+        const payments = await this.paymentsService.getPaymentsByUser(userId, dto.companyId);
+        
+        // Crear lista unificada de pedidos/reservas
+        const allItems: any[] = [];
+        
+        // 1. Agregar reservas confirmadas (las que ya están en la BD)
+        for (const r of reservations) {
+          allItems.push({
+            type: 'reservation',
+            date: r.date,
+            time: r.time,
+            service: r.service,
+            status: r.status,
+            guests: r.guests,
+            metadata: r.metadata,
+            createdAt: r.createdAt,
+          });
+        }
+        
+        // 2. Agregar pedidos basados en pagos (pendientes, rechazados, etc.)
+        for (const payment of payments) {
+          // Solo incluir pagos que no tengan reserva confirmada asociada
+          // (evitar duplicados con reservas ya confirmadas)
+          const hasReservation = reservations.some(r => 
+            r.metadata && 
+            typeof r.metadata === 'object' && 
+            (r.metadata as any).paymentId === payment.id
+          );
+          
+          if (!hasReservation) {
+            // Los pagos no tienen metadata en el schema actual
+            // Solo incluir información básica del pago
+            allItems.push({
+              type: 'payment',
+              date: payment.createdAt,
+              time: 'Por confirmar',
+              service: 'domicilio',
+              status: payment.status === 'APPROVED' ? 'approved' : 
+                      payment.status === 'PENDING' ? 'pending_payment' : 
+                      payment.status === 'DECLINED' ? 'declined' : 'error',
+              guests: null,
+              metadata: {},
+              amount: payment.amount,
+              paymentUrl: payment.paymentUrl,
+              createdAt: payment.createdAt,
+            });
+          }
+        }
+        
+        // 3. INCLUIR pedido/reserva en proceso si existe (aún no creado en BD)
+        if (context.stage === 'awaiting_payment' && context.collectedData) {
+          const collected = context.collectedData;
+          if (collected.date && collected.time) {
+            // Verificar que no esté ya en la lista de pagos
+            const alreadyInList = allItems.some(item => 
+              item.date === collected.date && 
+              item.time === collected.time &&
+              item.status === 'pending_payment'
+            );
+            
+            if (!alreadyInList) {
+              allItems.push({
+                type: 'current',
+                date: collected.date,
+                time: collected.time,
+                service: collected.service,
+                status: 'pending_payment',
+                guests: collected.guests,
+                metadata: {
+                  products: collected.products,
+                  treatment: collected.treatment,
+                },
+                createdAt: new Date(),
+              });
+            }
+          }
+        }
+        
+        // Ordenar por fecha de creación (más recientes primero)
+        allItems.sort((a, b) => {
+          const dateA = new Date(a.createdAt || 0).getTime();
+          const dateB = new Date(b.createdAt || 0).getTime();
+          return dateB - dateA;
+        });
+        
+        if (!allItems || allItems.length === 0) {
+          reply = 'No encontré pedidos o reservas anteriores en tu historial. 🤔\n\n¿Te gustaría hacer un nuevo pedido?';
+        } else {
+          // Detectar si pregunta específicamente por domicilios
+          const asksDomicilios = this.keywordDetector.mentionsDelivery(dto.message);
+          
+          // Filtrar por tipo de servicio si es específico
+          let filteredItems = allItems;
+          let serviceType = 'pedidos y reservas';
+          
+          if (asksDomicilios) {
+            filteredItems = allItems.filter(r => r.service === 'domicilio');
+            serviceType = 'domicilios';
+          }
+          
+          if (filteredItems.length === 0) {
+            reply = `No encontré ${serviceType} en tu historial. 🤔\n\n¿Te gustaría hacer uno ahora?`;
+          } else {
+            // Formatear respuesta con historial
+            reply = `📋 Aquí está tu historial de ${serviceType}:\n\n`;
+            
+            for (let i = 0; i < filteredItems.length; i++) {
+              const r = filteredItems[i];
+              const num = i + 1;
+              
+              // Emojis y textos según el estado
+              let statusEmoji = '⏳';
+              let statusText = 'Pendiente';
+              
+              if (r.status === 'confirmed') {
+                statusEmoji = '✅';
+                statusText = 'Confirmado';
+              } else if (r.status === 'approved') {
+                statusEmoji = '✅';
+                statusText = 'Pagado';
+              } else if (r.status === 'cancelled') {
+                statusEmoji = '❌';
+                statusText = 'Cancelado';
+              } else if (r.status === 'pending_payment') {
+                statusEmoji = '💳';
+                statusText = 'Pendiente de pago';
+              } else if (r.status === 'declined') {
+                statusEmoji = '🚫';
+                statusText = 'Pago rechazado';
+              } else if (r.status === 'error') {
+                statusEmoji = '⚠️';
+                statusText = 'Error en pago';
+              }
+              
+              reply += `${num}. ${statusEmoji} **${statusText}**\n`;
+              
+              // Formatear fecha
+              if (typeof r.date === 'string') {
+                reply += `   📅 Fecha: ${DateHelper.formatDateReadable(r.date)}\n`;
+              } else if (r.date instanceof Date) {
+                reply += `   📅 Fecha: ${DateHelper.formatDateReadable(r.date.toISOString().split('T')[0])}\n`;
+              }
+              
+              reply += `   🕐 Hora: ${r.time}\n`;
+              
+              if (r.service) {
+                const serviceName = r.service === 'domicilio' ? 'Domicilio' : r.service === 'mesa' ? 'Mesa' : r.service === 'cita' ? 'Cita' : r.service;
+                reply += `   🏷️ Servicio: ${serviceName}\n`;
+              }
+              
+              // Mostrar productos si existen CON CANTIDADES
+              if (r.metadata && typeof r.metadata === 'object') {
+                const metadata = r.metadata as any;
+                if (metadata.products && Array.isArray(metadata.products) && metadata.products.length > 0) {
+                  // Obtener config de empresa para nombres de productos
+                  const companyConfig = company?.config as any;
+                  const catalogProducts = Array.isArray(companyConfig?.products) ? companyConfig.products : [];
+                  
+                  const productLines: string[] = [];
+                  for (const item of metadata.products) {
+                    if (typeof item === 'object' && item.id) {
+                      // Formato nuevo con cantidades
+                      const product = catalogProducts.find((p: any) => p.id === item.id);
+                      if (product) {
+                        const quantity = item.quantity || 1;
+                        productLines.push(`${quantity}x ${product.name}`);
+                      }
+                    } else {
+                      // Formato antiguo (solo IDs)
+                      const product = catalogProducts.find((p: any) => p.id === item);
+                      if (product) {
+                        productLines.push(product.name);
+                      }
+                    }
+                  }
+                  
+                  if (productLines.length > 0) {
+                    reply += `   🛍️ Productos: ${productLines.join(', ')}\n`;
+                  }
+                }
+              }
+              
+              if (r.guests && r.guests > 1) {
+                reply += `   👥 Personas: ${r.guests}\n`;
+              }
+              
+              // Mostrar monto si es un pago
+              if (r.amount) {
+                const formattedAmount = new Intl.NumberFormat('es-CO', { 
+                  style: 'currency', 
+                  currency: 'COP', 
+                  minimumFractionDigits: 0 
+                }).format(r.amount);
+                reply += `   💰 Monto: ${formattedAmount}\n`;
+              }
+              
+              // Si está pendiente de pago o rechazado, mostrar link
+              if ((r.status === 'pending_payment' || r.status === 'declined') && r.paymentUrl) {
+                reply += `   🔗 Link: ${r.paymentUrl}\n`;
+              }
+              
+              reply += '\n';
+            }
+            
+            reply += `Total: ${filteredItems.length} ${serviceType}\n\n`;
+            
+            // Si hay algún pendiente de pago, recordar que deben pagar
+            const hasPendingPayment = filteredItems.some(r => r.status === 'pending_payment' || r.status === 'declined');
+            if (hasPendingPayment) {
+              reply += `⚠️ Recuerda completar los pagos pendientes para confirmar tus pedidos.\n\n`;
+            }
+            
+            reply += '¿Te gustaría hacer un nuevo pedido? 😊';
+          }
+        }
+        
+        await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
+        return {
+          reply,
+          intention: 'consultar',
+          confidence: 1.0,
+          conversationState: context.stage,
+        };
+      } catch (error) {
+        this.logger.error('Error consultando historial:', error);
+        // Continuar con el flujo normal si hay error
+      }
+    }
+
+    // 9. VERIFICAR ESTADO DE PAGO si el usuario dice que ya pagó
+    if (this.keywordDetector.saysAlreadyPaid(dto.message) || this.keywordDetector.mentionsPayment(dto.message)) {
+      try {
+        const conversationId = await this.conversations.findOrCreateConversation(userId, dto.companyId);
+        const pendingPayment = await this.paymentsService.getPendingPayment(conversationId);
+        
+        if (pendingPayment) {
+          // Verificar estado actualizado del pago
+          const updatedPayment = await this.paymentsService.checkPaymentStatus(pendingPayment.id);
+          
+          // Responder según el estado del pago
+          if (updatedPayment.status === 'APPROVED') {
+            // Pago aprobado - confirmar pedido
+            const service = context.collectedData?.service;
+            const isDelivery = service === 'domicilio';
+            const confirmationType = isDelivery ? 'pedido' : 'reserva';
+            
+            reply = `✅ ¡Perfecto! Tu pago ha sido confirmado exitosamente.\n\n🎉 Tu ${confirmationType} ha sido ${isDelivery ? 'confirmado' : 'confirmada'}. Te mantendremos informado sobre el estado de tu ${confirmationType}.`;
+            
+            // Actualizar estado de conversación
+            await this.conversations.saveContext(userId, dto.companyId, {
+              ...context,
+              stage: 'completed',
+              collectedData: {},
+            });
+            await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
+            
+            return {
+              reply,
+              intention: 'consultar',
+              confidence: 1.0,
+              conversationState: 'completed',
+            };
+          } else if (updatedPayment.status === 'PENDING') {
+            // Pago pendiente - verificar si tiene wompiTransactionId
+            if (!updatedPayment.wompiTransactionId) {
+              // El usuario aún no ha completado el pago en el enlace
+              const service = context.collectedData?.service;
+              const isDelivery = service === 'domicilio';
+              const orderType = isDelivery ? 'pedido' : 'reserva';
+              
+              reply = `⏳ Veo que aún no has completado el pago en el enlace.\n\nPor favor ingresa al siguiente enlace para realizar el pago del 50% y confirmar tu ${orderType}:\n\n🔗 ${updatedPayment.paymentUrl}\n\nCuando hayas completado el pago, escríbeme "ya pagué" y verificaré el estado. ✅`;
+            } else {
+              // Ya tiene transaction ID pero está pendiente
+              reply = `⏳ Tu pago está en proceso de confirmación. Por favor espera unos momentos mientras se verifica.\n\nSi ya realizaste el pago, puede tardar hasta 5 minutos en reflejarse en el sistema. Vuelve a escribir "ya pagué" en unos minutos. 😊`;
+            }
+            
+            await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
+            return {
+              reply,
+              intention: 'consultar',
+              confidence: 1.0,
+              conversationState: context.stage,
+            };
+          } else if (updatedPayment.status === 'DECLINED' || updatedPayment.status === 'ERROR') {
+            // Pago rechazado
+            const service = context.collectedData?.service;
+            const isDelivery = service === 'domicilio';
+            const orderType = isDelivery ? 'pedido' : 'reserva';
+            
+            reply = `❌ Tu pago ha sido rechazado. Por favor intenta nuevamente con otro método de pago o contacta a tu banco.\n\n🔗 Intenta nuevamente: ${updatedPayment.paymentUrl}\n\nSi necesitas ayuda, escríbeme. 😊`;
+            
+            await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
+            return {
+              reply,
+              intention: 'consultar',
+              confidence: 1.0,
+              conversationState: context.stage,
+            };
+          }
+        } else if (this.keywordDetector.mentionsPayment(dto.message)) {
+          // El usuario pregunta por el pago pero no hay pagos pendientes
+          reply = `No encontré ningún pago pendiente asociado a tu cuenta. ¿En qué más puedo ayudarte?`;
+          await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
+          return {
+            reply,
+            intention: 'consultar',
+            confidence: 1.0,
+            conversationState: context.stage,
+          };
+        }
+      } catch (error) {
+        this.logger.error('Error verificando estado de pago:', error);
+        // Continuar con el flujo normal si hay error
+      }
+    }
+
+    // 10. VALIDAR ESTADO awaiting_payment - Si el usuario está esperando pago pero no dice "ya pagué"
+    // recordarle que debe pagar primero antes de continuar
+    if (context.stage === 'awaiting_payment' && 
+        !this.keywordDetector.saysAlreadyPaid(dto.message) && 
+        !this.keywordDetector.mentionsPayment(dto.message) &&
+        detection.intention !== 'cancelar') {
+      try {
+        const conversationId = await this.conversations.findOrCreateConversation(userId, dto.companyId);
+        const pendingPayment = await this.paymentsService.getPendingPayment(conversationId);
+        
+        if (pendingPayment && pendingPayment.paymentUrl) {
+          const service = context.collectedData?.service;
+          const isDelivery = service === 'domicilio';
+          const orderType = isDelivery ? 'pedido' : 'reserva';
+          
+          reply = `⚠️ Recuerda que tienes un pago pendiente para confirmar tu ${orderType}.\n\n🔗 Completa el pago aquí: ${pendingPayment.paymentUrl}\n\nCuando hayas pagado, escríbeme "ya pagué" para verificar. 😊`;
+          
+          await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
+          return {
+            reply,
+            intention: 'consultar',
+            confidence: 1.0,
+            conversationState: 'awaiting_payment',
+          };
+        }
+      } catch (error) {
+        this.logger.error('Error verificando pago pendiente:', error);
+      }
+    }
+
+    // 11. Procesar según intención usando handlers
     const handlerContext = {
       detection,
       context,
@@ -390,22 +808,22 @@ export class BotEngineService {
       newState.stage = 'idle';
     }
 
-    // 10. Invalidar cache ANTES de guardar para evitar race conditions
+    // 11. Invalidar cache ANTES de guardar para evitar race conditions
     await this.contextCache.invalidateContext(contextKey);
     
-    // 11. Guardar estado actualizado
+    // 12. Guardar estado actualizado
     await this.conversations.saveContext(userId, dto.companyId, newState);
 
-      // 12. Agregar respuesta al historial
+      // 13. Agregar respuesta al historial
     await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
 
-      // 13. Si la reserva se completó, crear/buscar conversación en BD para pagos
+      // 14. Si la reserva se completó, crear/buscar conversación en BD para pagos
     let conversationId = `${userId}_${dto.companyId}`;
     if (newState.stage === 'completed' && detection.intention === 'reservar') {
       conversationId = await this.conversations.findOrCreateConversation(userId, dto.companyId);
     }
 
-      // 14. Retornar respuesta
+      // 15. Retornar respuesta
     return {
       reply,
       intention: detection.intention,
@@ -459,6 +877,15 @@ export class BotEngineService {
       ),
     };
 
+    // Si cambia de servicio, limpiar datos específicos del servicio anterior (incluyendo teléfono)
+    if (extracted.service && previousData.service && extracted.service !== previousData.service) {
+      // Limpiar productos y teléfono al cambiar de servicio
+      delete collected.products;
+      delete collected.phone;
+      delete collected.treatment;
+      delete collected.product;
+    }
+
     // Identificar qué datos NUEVOS se recibieron en este mensaje
     const newData: any = {};
     for (const [key, value] of Object.entries(extracted)) {
@@ -480,26 +907,67 @@ export class BotEngineService {
       }
     }
 
-    // Intentar mapear productos/tratamientos mencionados en texto a IDs del catálogo
-    // Esto permite que frases como "pizza margherita y coca cola" se conviertan en IDs conocidos
+    // Intentar mapear productos/tratamientos mencionados en texto a IDs del catálogo CON CANTIDADES
+    // Esto permite que frases como "2 pizzas margherita y 3 coca colas" se conviertan en IDs conocidos con cantidades
     const catalogProducts = Array.isArray(config?.products) ? config.products : [];
     if (catalogProducts.length > 0) {
       const normalizedMsg = this.textUtils.normalizeText(dto.message.toLowerCase());
-      const foundProductIds: string[] = [];
+      
+      // Intentar detectar productos con cantidades mencionados en el texto
+      const foundProducts: Array<{ id: string; quantity: number }> = [];
+      
       for (const product of catalogProducts) {
         const name = this.textUtils.normalizeText(product.name || '');
         if (name && normalizedMsg.includes(name)) {
-          foundProductIds.push(product.id);
+          // Buscar cantidad antes del nombre del producto
+          // Patrones: "2 pizzas", "tres cocas", "una lasagna"
+          const quantityPatterns = [
+            { regex: new RegExp(`(\\d+)\\s+${name}`, 'i'), isNumber: true },
+            { regex: new RegExp(`una?\\s+${name}`, 'i'), quantity: 1 },
+            { regex: new RegExp(`dos\\s+${name}`, 'i'), quantity: 2 },
+            { regex: new RegExp(`tres\\s+${name}`, 'i'), quantity: 3 },
+            { regex: new RegExp(`cuatro\\s+${name}`, 'i'), quantity: 4 },
+            { regex: new RegExp(`cinco\\s+${name}`, 'i'), quantity: 5 },
+          ];
+          
+          let quantity = 1; // Default
+          for (const pattern of quantityPatterns) {
+            const match = dto.message.match(pattern.regex);
+            if (match) {
+              if (pattern.isNumber && match[1]) {
+                quantity = parseInt(match[1], 10);
+              } else if (pattern.quantity) {
+                quantity = pattern.quantity;
+              }
+              break;
+            }
+          }
+          
+          foundProducts.push({ id: product.id, quantity });
         }
       }
-      if (foundProductIds.length > 0) {
+      
+      if (foundProducts.length > 0) {
+        // Combinar con productos existentes
         const existing = Array.isArray(collected.products) ? collected.products : [];
-        const merged = Array.from(new Set([...existing, ...foundProductIds]));
-        collected.products = merged;
-        newData.products = foundProductIds;
+        
+        // Merge: sumar cantidades si el producto ya existe
+        const mergedProducts = [...existing];
+        for (const newProd of foundProducts) {
+          const existingIndex = mergedProducts.findIndex(p => p.id === newProd.id);
+          if (existingIndex >= 0) {
+            mergedProducts[existingIndex].quantity += newProd.quantity;
+          } else {
+            mergedProducts.push(newProd);
+          }
+        }
+        
+        collected.products = mergedProducts;
+        newData.products = foundProducts;
+        
         // Para clínica: si no hay tratamiento explícito, usar el primero detectado
         if (!collected.treatment) {
-          collected.treatment = foundProductIds[0];
+          collected.treatment = foundProducts[0].id;
         }
         // Si hay productos detectados, preferir un servicio que requiera productos
         const currentService = collected.service;
@@ -529,12 +997,9 @@ export class BotEngineService {
       const canSwitchToCita = availableServices['cita']?.requiresProducts === true;
 
       if (!currentService || !currentRequiresProducts) {
-        if (canSwitchToDomicilio && (foundProductIds.length > 0 || mentionsDelivery || mentionsFood)) {
+        if (canSwitchToDomicilio && (foundProducts.length > 0 || mentionsDelivery || mentionsFood)) {
           collected.service = 'domicilio';
           newData.service = 'domicilio';
-        } else if (canSwitchToCita && mentionsDelivery) {
-          collected.service = 'cita';
-          newData.service = 'cita';
         }
       }
     }
@@ -560,14 +1025,17 @@ export class BotEngineService {
       }
     }
 
-    // Servicios que requieren pago pero no productos (ej. clínica: tratamiento obligatorio)
-    // Si hay catálogo de productos/tratamientos, exigir "treatment" (o "product") antes de cerrar
-    if (requiresPayment && (!requiresProducts)) {
-      const hasCatalog = Array.isArray(config?.products) && config.products.length > 0;
-      const hasTreatment = collected.treatment || collected.product;
-      if (hasCatalog && !hasTreatment) {
-        required.push('treatment');
-        missingFieldsLabels['treatment'] = 'tratamiento';
+    // Servicios que requieren productos pero no han sido agregados
+    // Solo validar si el servicio REQUIERE productos (domicilio, cita con tratamiento)
+    if (requiresProducts && Array.isArray(config?.products) && config.products.length > 0) {
+      if (!collected.products || collected.products.length === 0) {
+        // No ha seleccionado productos cuando el servicio los requiere
+        if (!required.includes('products')) {
+          required.push('products');
+          // Determinar etiqueta según tipo de empresa
+          const isRestaurant = company?.type === 'restaurant';
+          missingFieldsLabels['products'] = isRestaurant ? 'productos' : 'tratamientos';
+        }
       }
     }
     
@@ -650,31 +1118,42 @@ export class BotEngineService {
       };
     }
 
-    // Crear reserva
-    try {
-      // Calcular monto si requiere pago
+    // ===== FLUJO ESPECIAL PARA SERVICIOS QUE REQUIEREN PAGO =====
+    // Si requiere pago y aún no se ha generado el link, generar link de pago primero
+    if (requiresPayment && context.stage !== 'awaiting_payment') {
+      // Calcular monto del pago
       let paymentAmount = 0;
       let paymentDescription = '';
       
       if (requiresProducts && collected.products) {
-        // Calcular total de productos
         const products = config?.products || [];
         const productsList = Array.isArray(collected.products) ? collected.products : [];
         let subtotal = 0;
         
-        for (const productId of productsList) {
-          const product = products.find((p: any) => p.id === productId);
-          if (product) {
-            subtotal += product.price || 0;
+        // Calcular subtotal multiplicando precio por cantidad
+        for (const item of productsList) {
+          if (typeof item === 'object' && item.id) {
+            const product = products.find((p: any) => p.id === item.id);
+            if (product) {
+              const quantity = item.quantity || 1;
+              subtotal += (product.price || 0) * quantity;
+            }
+          } else {
+            // Fallback para formato antiguo (solo IDs)
+            const product = products.find((p: any) => p.id === item);
+            if (product) {
+              subtotal += product.price || 0;
+            }
           }
         }
         
-        // Agregar costo de envío si es domicilio
         const deliveryFee = selectedService?.deliveryFee || 0;
         paymentAmount = subtotal + deliveryFee;
-        paymentDescription = `Pedido a domicilio - ${productsList.length} producto(s)`;
+        const totalItems = productsList.reduce((sum, item) => {
+          return sum + (typeof item === 'object' ? (item.quantity || 1) : 1);
+        }, 0);
+        paymentDescription = `Pedido a domicilio - ${totalItems} producto(s)`;
       } else if (requiresPayment && collected.service) {
-        // Para citas, usar precio del tratamiento/producto seleccionado
         const products = config?.products || [];
         const treatmentId = collected.treatment || collected.product;
         if (treatmentId) {
@@ -690,6 +1169,105 @@ export class BotEngineService {
       const paymentPercentage = company?.paymentPercentage || 100;
       const finalAmount = Math.round(paymentAmount * (paymentPercentage / 100));
       
+      if (finalAmount > 0) {
+        try {
+          // Obtener o crear conversación
+          const conversationId = await this.conversations.findOrCreateConversation(dto.userId, dto.companyId);
+          
+          // Verificar si ya existe un pago pendiente
+          const existingPayment = await this.paymentsService.getPendingPayment(conversationId);
+          
+          let paymentUrl = null;
+          if (existingPayment && existingPayment.paymentUrl) {
+            // Usar link de pago existente
+            paymentUrl = existingPayment.paymentUrl;
+          } else {
+            // Crear nuevo pago
+            const user = await this.usersService.findOne(dto.userId);
+            const payment = await this.paymentsService.createPayment({
+              companyId: dto.companyId,
+              conversationId,
+              amount: finalAmount,
+              description: paymentDescription,
+              customerEmail: user?.email || `user-${dto.userId}@example.com`,
+              customerName: user?.name || collected.name || 'Cliente',
+            });
+            paymentUrl = payment.paymentUrl;
+          }
+          
+          // Generar breakdown de productos CON CANTIDADES
+          let productsBreakdown = '';
+          if (requiresProducts && collected.products && Array.isArray(collected.products)) {
+            const products = config?.products || [];
+            const productLines: string[] = [];
+            for (const item of collected.products) {
+              if (typeof item === 'object' && item.id) {
+                const product = products.find((p: any) => p.id === item.id);
+                if (product) {
+                  const quantity = item.quantity || 1;
+                  const itemTotal = (product.price || 0) * quantity;
+                  productLines.push(`• ${quantity}x ${product.name} - $${itemTotal.toLocaleString('es-CO')}`);
+                }
+              } else {
+                // Fallback para formato antiguo
+                const product = products.find((p: any) => p.id === item);
+                if (product) {
+                  productLines.push(`• ${product.name} - $${(product.price || 0).toLocaleString('es-CO')}`);
+                }
+              }
+            }
+            if (productLines.length > 0) {
+              productsBreakdown = `\n\n🛍️ Productos:\n${productLines.join('\n')}`;
+            }
+            if (selectedService?.deliveryFee) {
+              productsBreakdown += `\n🚚 Envío: $${selectedService.deliveryFee.toLocaleString('es-CO')}`;
+            }
+          }
+          
+          const isDelivery = collected.service === 'domicilio';
+          const confirmationType = isDelivery ? 'pedido' : 'reserva';
+          
+          // Mensaje solicitando pago antes de confirmar
+          let reply = `📋 Resumen de tu ${confirmationType}:\n\n`;
+          reply += `📅 Fecha: ${DateHelper.formatDateReadable(collected.date!)}\n`;
+          reply += `🕐 Hora: ${collected.time}\n`;
+          if (collected.service && availableServices[collected.service]) {
+            reply += `🏷️ Servicio: ${availableServices[collected.service].name}\n`;
+          }
+          if (productsBreakdown) {
+            reply += productsBreakdown;
+          }
+          const totalText = paymentAmount > 0 ? `\n\n💰 Total: $${paymentAmount.toLocaleString('es-CO')}` : '';
+          reply += totalText;
+          reply += `\n💳 Anticipo requerido: $${finalAmount.toLocaleString('es-CO')} (${paymentPercentage}% del total)`;
+          reply += `\n\n⚠️ Para confirmar tu ${confirmationType}, debes realizar el pago del anticipo del ${paymentPercentage}% por adelantado.`;
+          if (paymentUrl) {
+            reply += `\n\n🔗 Realiza el pago aquí: ${paymentUrl}`;
+          }
+          reply += `\n\nUna vez realizado el pago, escríbeme "ya pagué" para verificar y confirmar tu ${confirmationType}. 😊`;
+          
+          // Guardar estado de espera de pago
+          return {
+            reply,
+            newState: {
+              ...context,
+              collectedData: collected,
+              stage: 'awaiting_payment',
+              lastIntention: 'reservar',
+            },
+            missingFields: [],
+          };
+        } catch (paymentError) {
+          this.logger.error('Error generando link de pago:', paymentError);
+          // Si falla el pago, continuar con flujo normal (crear reserva sin pago)
+        }
+      }
+    }
+
+    // ===== FLUJO NORMAL: CREAR RESERVA (sin pago o pago ya procesado) =====
+    // Este flujo solo se ejecuta si NO requiere pago o si el pago ya fue gestionado
+    // Crear reserva
+    try {
       const reservation = await this.reservations.create({
         company: { connect: { id: dto.companyId } },
         userId: dto.userId,
@@ -699,43 +1277,17 @@ export class BotEngineService {
         phone: collected.phone,
         name: collected.name,
         service: collected.service,
-        status: requiresPayment && finalAmount > 0 ? 'pending' : 'confirmed', // Pendiente si requiere pago
+        status: 'confirmed',
         metadata: {
           products: collected.products,
           treatment: collected.treatment || collected.product,
-          paymentAmount: finalAmount,
-          requiresPayment,
         },
       });
 
-      // Generar link de pago si es necesario
-      let paymentUrl = null;
-      if (requiresPayment && finalAmount > 0) {
-        try {
-          // Obtener o crear conversación
-          const conversationId = await this.conversations.findOrCreateConversation(dto.userId, dto.companyId);
-          
-          // Obtener datos del usuario
-          const user = await this.usersService.findOne(dto.userId);
-          
-          // Crear pago
-          const payment = await this.paymentsService.createPayment({
-            companyId: dto.companyId,
-            conversationId,
-            amount: finalAmount,
-            description: paymentDescription,
-            customerEmail: user?.email || `user-${dto.userId}@example.com`,
-            customerName: user?.name || collected.name || 'Cliente',
-          });
-          
-          paymentUrl = payment.paymentUrl;
-        } catch (paymentError) {
-          console.error('Error creando pago:', paymentError);
-          // Continuar sin pago si hay error
-        }
-      }
-
       // Generar respuesta de confirmación
+      const isDelivery = collected.service === 'domicilio';
+      const confirmationType = isDelivery ? 'pedido' : 'reserva';
+      
       let reply = await this.messagesTemplates.getReservationConfirm(companyType, {
         date: collected.date!,
         time: collected.time!,
@@ -744,16 +1296,35 @@ export class BotEngineService {
         service: collected.service,
         serviceName: collected.service && availableServices[collected.service]?.name,
       });
+      
+      // Reemplazar 'reserva' por 'pedido' si es domicilio
+      if (isDelivery) {
+        reply = reply.replace(/reserva/gi, (match) => {
+          return match[0] === match[0].toUpperCase() ? 'Pedido' : 'pedido';
+        });
+        reply = reply.replace(/Tu reservación/gi, 'Tu pedido');
+        reply = reply.replace(/La reservación/gi, 'El pedido');
+      }
 
-      // Breakdown de productos/tratamientos (domicilio/cita) y envío
+      // Breakdown de productos/tratamientos (domicilio/cita) y envío CON CANTIDADES
       let productsBreakdown = '';
       if (requiresProducts && collected.products && Array.isArray(collected.products)) {
         const products = config?.products || [];
         const productLines: string[] = [];
-        for (const productId of collected.products) {
-          const product = products.find((p: any) => p.id === productId);
-          if (product) {
-            productLines.push(`• ${product.name} - $${(product.price || 0).toLocaleString('es-CO')}`);
+        for (const item of collected.products) {
+          if (typeof item === 'object' && item.id) {
+            const product = products.find((p: any) => p.id === item.id);
+            if (product) {
+              const quantity = item.quantity || 1;
+              const itemTotal = (product.price || 0) * quantity;
+              productLines.push(`• ${quantity}x ${product.name} - $${itemTotal.toLocaleString('es-CO')}`);
+            }
+          } else {
+            // Fallback para formato antiguo
+            const product = products.find((p: any) => p.id === item);
+            if (product) {
+              productLines.push(`• ${product.name} - $${(product.price || 0).toLocaleString('es-CO')}`);
+            }
           }
         }
         if (productLines.length > 0) {
@@ -766,17 +1337,6 @@ export class BotEngineService {
 
       if (productsBreakdown) {
         reply += productsBreakdown;
-      }
-
-      // Agregar información de pago si es necesario (incluye total y anticipo)
-      if (requiresPayment && finalAmount > 0) {
-        const totalText = paymentAmount > 0 ? `\nTotal: $${paymentAmount.toLocaleString('es-CO')}` : '';
-        const anticipoText = `\n💳 Anticipo requerido: $${finalAmount.toLocaleString('es-CO')} (${paymentPercentage}% del total)`;
-        if (paymentUrl) {
-          reply += `${totalText}${anticipoText}\n\n🔗 Link de pago: ${paymentUrl}`;
-        } else {
-          reply += `${totalText}${anticipoText}`;
-        }
       }
 
       return {

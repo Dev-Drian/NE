@@ -66,18 +66,22 @@ export class MessagesTemplatesService {
     return this.replaceTemplate(config.templates.greeting, { companyName });
   }
 
-  async getReservationRequest(companyType: string, fields: string[]): Promise<string> {
+  async getReservationRequest(companyType: string, fields: string[], service?: string): Promise<string> {
     const config = await this.getConfigByCompanyType(companyType);
     const template = config?.templates.reservationRequest || config?.templates.missingFields || 'Para continuar necesito: {{fields}}';
     const terminology = config?.terminology || this.getDefaultTerminology();
     
+    // Determinar si es domicilio para usar "pedido" en lugar de "reserva"
+    const isDomicilio = service === 'domicilio';
+    const reservationType = isDomicilio ? 'pedido' : terminology.reservation;
+    
     // Si solo falta un campo, hacer mensaje más amigable
     if (fields.length === 1) {
-      return `Perfecto, solo me falta tu ${fields[0]} para confirmar la ${terminology.reservation}. ¿Me lo proporcionas?`;
+      return `Perfecto, solo me falta tu ${fields[0]} para confirmar tu ${reservationType}. ¿Me lo proporcionas?`;
     }
     
     // Si faltan varios campos, usar el template
-    return this.replaceTemplate(template, { fields: fields.join(', '), reservation: terminology.reservation });
+    return this.replaceTemplate(template, { fields: fields.join(', '), reservation: reservationType });
   }
 
   /**
@@ -92,6 +96,10 @@ export class MessagesTemplatesService {
   ): Promise<string> {
     const terminology = await this.getTerminology(companyType);
     const parts: string[] = [];
+
+    // Determinar si es domicilio para usar "pedido" en lugar de "reserva"
+    const isDomicilio = collectedData['service'] === 'domicilio';
+    const reservationType = isDomicilio ? 'pedido' : terminology.reservation;
 
     // Construir confirmación de datos recibidos
     const receivedParts: string[] = [];
@@ -128,22 +136,42 @@ export class MessagesTemplatesService {
         if (missingFields.length === 1) {
           // Corregir "tu personas" a "el número de personas" o "comensales"
           const fieldLabel = missingFields[0];
-          const fieldText = fieldLabel === 'personas' || fieldLabel === terminology.people 
-            ? `el número de ${terminology.people}` 
-            : fieldLabel === 'comensales'
-            ? 'comensales'
-            : `tu ${fieldLabel}`;
-          parts.push(`\n\nSolo me falta ${fieldText} para confirmar la ${terminology.reservation}.`);
+          let fieldText;
+          
+          if (fieldLabel === 'productos') {
+            fieldText = 'los productos que deseas pedir';
+          } else if (fieldLabel === 'personas' || fieldLabel === terminology.people || fieldLabel === 'comensales') {
+            fieldText = `el número de ${terminology.people}`;
+          } else {
+            fieldText = `tu ${fieldLabel}`;
+          }
+          
+          parts.push(`Solo me falta ${fieldText} para confirmar tu ${reservationType}.`);
         } else {
-          parts.push(`\n\nAhora necesito: ${missingFields.join(', ')}.`);
+          parts.push(`Solo me faltan: ${missingFields.join(', ')} para confirmar tu ${reservationType}.`);
         }
       }
-      
-      return parts.join('');
+    } else {
+      // No se recibieron datos nuevos, solo pedir los faltantes
+      if (missingFields.length === 1) {
+        const fieldLabel = missingFields[0];
+        let fieldText;
+        
+        if (fieldLabel === 'productos') {
+          fieldText = 'los productos que deseas pedir';
+        } else if (fieldLabel === 'personas' || fieldLabel === terminology.people || fieldLabel === 'comensales') {
+          fieldText = `el número de ${terminology.people}`;
+        } else {
+          fieldText = `tu ${fieldLabel}`;
+        }
+        
+        parts.push(`Para confirmar tu ${reservationType}, necesito ${fieldText}.`);
+      } else {
+        parts.push(`Para continuar con tu ${reservationType}, necesito: ${missingFields.join(', ')}.`);
+      }
     }
 
-    // Si no hay datos nuevos, usar mensaje tradicional de solicitud
-    return await this.getReservationRequest(companyType, missingFields);
+    return parts.join('\n\n');
   }
 
   /**
@@ -192,8 +220,13 @@ export class MessagesTemplatesService {
     const dateReadable = DateHelper.formatDateReadable(data.date);
     const timeReadable = DateHelper.formatTimeReadable(data.time);
     
+    // Determinar si es domicilio para usar "pedido" en lugar de "reserva"
+    const isDomicilio = data.service === 'domicilio';
+    const reservationType = isDomicilio ? 'Pedido' : terminology.reservation.charAt(0).toUpperCase() + terminology.reservation.slice(1);
+    const reservationTypeConfirmed = isDomicilio ? 'confirmado' : 'confirmada';
+    
     // Construir mensaje con servicio si está disponible
-    let confirmMessage = `✅ ¡${terminology.reservation.charAt(0).toUpperCase() + terminology.reservation.slice(1)} confirmada!
+    let confirmMessage = `✅ ¡${reservationType} ${reservationTypeConfirmed}!
 
 📅 Fecha: ${dateReadable}
 🕐 Hora: ${timeReadable}`;

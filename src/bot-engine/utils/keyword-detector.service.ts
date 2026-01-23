@@ -7,6 +7,7 @@ import { TextUtilsService } from './text-utils.service';
  */
 const KEYWORD_CATEGORIES = {
   greeting: ['hola', 'buenos días', 'buenas tardes', 'buenas noches', 'hey', 'hi', 'buen día'],
+  farewell: ['gracias', 'listo gracias', 'perfecto gracias', 'ok gracias', 'vale gracias', 'adiós', 'adios', 'chao', 'hasta luego', 'nos vemos', 'bye'],
   products: ['menu', 'productos', 'que tienen', 'opciones', 'carta', 'que hay', 'que venden', 'que ofrecen', 'servicios', 'tratamientos', 'que servicios', 'cuales servicios'],
   paraLlevar: ['para llevar', 'pedir para llevar', 'llevar', 'take away', 'recoger', 'pasar a recoger'],
   consulta: ['horario', 'horarios', 'abren', 'cierran', 'atencion', 'que dias', 'cual es el horario', 'cuando abren', 'direccion', 'ubicacion', 'donde estan'],
@@ -14,6 +15,7 @@ const KEYWORD_CATEGORIES = {
   reservar: ['reservar', 'reserva', 'cita', 'agendar', 'quiero', 'necesito', 'deseo'],
   cancelar: ['cancelar', 'cancelar mi reserva', 'cancelar reserva'],
   payment: ['pago', 'pagar', 'apague', 'apagar', 'pagado', 'pagaste', 'pagamos', 'pague', 'pague ya', 'ya pague', 'falta pagar', 'debo pagar', 'link de pago', 'link pago', 'pago pendiente', 'pago falta'],
+  history: ['mis pedidos', 'mis domicilios', 'mis reservas', 'mis citas', 'cuantos pedidos', 'cuantos domicilios', 'cuantas reservas', 'historial', 'pedidos anteriores', 'que he pedido', 'pedidos previos', 'mis ordenes', 'cuantos llevo', 'cuantas llevo', 'ultimos pedidos', 'ultimas reservas'],
 };
 
 /**
@@ -29,6 +31,13 @@ export class KeywordDetectorService {
    */
   isGreeting(message: string): boolean {
     return this.textUtils.containsAnyKeyword(message, KEYWORD_CATEGORIES.greeting);
+  }
+
+  /**
+   * Detecta si el mensaje es una despedida o agradecimiento
+   */
+  isFarewell(message: string): boolean {
+    return this.textUtils.containsAnyKeyword(message, KEYWORD_CATEGORIES.farewell);
   }
 
   /**
@@ -98,10 +107,27 @@ export class KeywordDetectorService {
   }
 
   /**
+   * Detecta si el mensaje pregunta si tienen servicio de domicilio (consulta informativa)
+   */
+  asksAboutDelivery(message: string): boolean {
+    const deliveryKeywords = ['domicilio', 'delivery', 'domicilios'];
+    const questionWords = ['hacen', 'tienen', 'hay', 'ofrecen', 'manejan', 'existe', 'cuentan con', 'también', 'tambien'];
+    const hasDeliveryKeyword = this.textUtils.containsAnyKeyword(message, deliveryKeywords);
+    const isQuestion = this.textUtils.containsAnyKeyword(message, questionWords);
+    return hasDeliveryKeyword && isQuestion;
+  }
+
+  /**
    * Detecta si el mensaje menciona términos relacionados con delivery
+   * Excluye preguntas informativas ("hacen domicilios?", "tienen delivery?")
    */
   mentionsDelivery(message: string): boolean {
-    const deliveryKeywords = ['domicilio', 'delivery', 'llevar a casa', 'enviar a', 'pedido'];
+    // Si es una pregunta sobre disponibilidad, NO es orden
+    if (this.asksAboutDelivery(message)) {
+      return false;
+    }
+    
+    const deliveryKeywords = ['domicilio', 'delivery', 'llevar a casa', 'enviar a', 'envio', 'traigan', 'lleven', 'a casa', 'que me lo traigan'];
     return this.textUtils.containsAnyKeyword(message, deliveryKeywords);
   }
 
@@ -110,6 +136,28 @@ export class KeywordDetectorService {
    */
   mentionsPayment(message: string): boolean {
     return this.textUtils.containsAnyKeyword(message, KEYWORD_CATEGORIES.payment);
+  }
+
+  /**
+   * Detecta si el usuario afirma que ya pagó
+   */
+  saysAlreadyPaid(message: string): boolean {
+    const paidKeywords = [
+      'ya pague', 'ya pagué', 'ya page', 'ya pago', 'ya pagó', 
+      'pague ya', 'pagué ya', 'acabo de pagar', 'acabo de page', 
+      'ya realice el pago', 'ya realicé el pago', 'ya hice el pago', 
+      'listo pague', 'listo pagué', 'listo ya pague', 'listo ya pagué',
+      'realice el pago', 'realicé el pago', 'hice el pago',
+      'complete el pago', 'completé el pago', 'efectue el pago', 'efectué el pago'
+    ];
+    return this.textUtils.containsAnyKeyword(message, paidKeywords);
+  }
+
+  /**
+   * Detecta si el usuario pregunta por su historial de pedidos/reservas
+   */
+  asksForHistory(message: string): boolean {
+    return this.textUtils.containsAnyKeyword(message, KEYWORD_CATEGORIES.history);
   }
 
   /**
