@@ -22,6 +22,16 @@ import { MessagesTemplatesModule } from '../messages-templates/messages-template
 import { UsersModule } from '../users/users.module';
 import { PaymentsModule } from '../payments/payments.module';
 import { KeywordsModule } from '../keywords/keywords.module';
+import { ContextCompressorService } from './context/context-compressor.service';
+import { ContextBuilderService } from './context/context-builder.service';
+import { FieldExtractorService } from './context/field-extractor.service';
+import { ServiceValidatorService } from './services/service-validator.service';
+import { ServiceConfigResolverService } from './services/service-config-resolver.service';
+import { GenericServiceStrategy } from './services/strategy/generic-service.strategy';
+import { ServiceRegistryService } from './services/service-registry.service';
+import { ReservationFlowService } from './handlers/reservation/reservation-flow.service';
+import { PromptBuilderService } from './layers/prompt-builder.service';
+import { ResourceValidatorService } from './services/resource-validator.service';
 
 @Module({
   imports: [
@@ -50,6 +60,22 @@ import { KeywordsModule } from '../keywords/keywords.module';
     QueryHandler,
     ReservationHandler,
     MetricsService,
+    // Nuevos servicios de contexto
+    ContextCompressorService,
+    ContextBuilderService,
+    FieldExtractorService,
+    // Servicios de validación
+    ServiceValidatorService,
+    ServiceConfigResolverService,
+    // Estrategias genéricas por servicio
+    GenericServiceStrategy,
+    ServiceRegistryService,
+    // Flujo de reservas refactorizado
+    ReservationFlowService,
+    // Prompt builder modular (Layer3)
+    PromptBuilderService,
+    // Validador de recursos (mesas, productos, etc.)
+    ResourceValidatorService,
   ],
   exports: [BotEngineService],
 })

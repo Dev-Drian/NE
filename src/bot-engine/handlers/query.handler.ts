@@ -47,14 +47,14 @@ export class QueryHandler implements IIntentionHandler {
     const askingAboutProducts = this.keywordDetector.asksForProducts(dto.message);
     
     if (askingAboutProducts) {
+      reply = '';
+      
       // Mostrar servicios disponibles
       if (config?.services && Object.keys(config.services).length > 0) {
         const servicesList = Object.entries(config.services)
           .map(([key, value]: [string, any]) => `• ${value.name}`)
           .join('\n');
         reply = `Ofrecemos los siguientes servicios:\n\n${servicesList}`;
-      } else {
-        reply = '';
       }
       
       // Mostrar productos disponibles si existen
@@ -77,7 +77,8 @@ export class QueryHandler implements IIntentionHandler {
         }
       }
       
-      if (reply) {
+      // SIEMPRE asegurar que hay respuesta
+      if (reply && reply.trim().length > 0) {
         reply += '\n\n¿Qué te gustaría pedir? 😊';
         
         return {
@@ -88,6 +89,7 @@ export class QueryHandler implements IIntentionHandler {
           },
         };
       }
+      // Si no hay productos ni servicios, continuar con el flujo normal
     }
     
     // PRIORIDAD 3: Verificar si la consulta incluye fecha/hora específica (consulta de disponibilidad)
@@ -117,6 +119,11 @@ export class QueryHandler implements IIntentionHandler {
     } else {
       // Fallback: usar suggestedReply de OpenAI o respuesta genérica
       reply = detection.suggestedReply || await this.messagesTemplates.getReservationQuery(company.type, hoursText);
+    }
+    
+    // VALIDACIÓN: NUNCA retornar respuesta vacía
+    if (!reply || reply.trim().length === 0) {
+      reply = `¿En qué puedo ayudarte? Puedo ayudarte a hacer una reserva, consultar disponibilidad o resolver cualquier duda. 😊`;
     }
     
     // NO resetear stage si estamos en medio de una reserva

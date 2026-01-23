@@ -58,25 +58,25 @@ async function main() {
         // Productos/Menú (para domicilio o consumo)
         products: [
           // Pizzas
-          { id: 'prod-1', name: 'Pizza Margherita', price: 25000, category: 'pizzas', available: true },
-          { id: 'prod-2', name: 'Pizza Pepperoni', price: 28000, category: 'pizzas', available: true },
-          { id: 'prod-3', name: 'Pizza Cuatro Quesos', price: 30000, category: 'pizzas', available: true },
-          { id: 'prod-4', name: 'Pizza Vegetariana', price: 27000, category: 'pizzas', available: true },
+          { id: 'prod-1', name: 'Pizza Margherita', price: 25000, category: 'pizzas', available: true, stock: 10 },
+          { id: 'prod-2', name: 'Pizza Pepperoni', price: 28000, category: 'pizzas', available: true, stock: 8 },
+          { id: 'prod-3', name: 'Pizza Cuatro Quesos', price: 30000, category: 'pizzas', available: true, stock: 5 },
+          { id: 'prod-4', name: 'Pizza Vegetariana', price: 27000, category: 'pizzas', available: true, stock: 7 },
           
           // Pastas
-          { id: 'prod-5', name: 'Pasta Carbonara', price: 22000, category: 'pastas', available: true },
-          { id: 'prod-6', name: 'Pasta Bolognesa', price: 20000, category: 'pastas', available: true },
-          { id: 'prod-7', name: 'Pasta Alfredo', price: 24000, category: 'pastas', available: true },
-          { id: 'prod-8', name: 'Lasagna', price: 26000, category: 'pastas', available: true },
+          { id: 'prod-5', name: 'Pasta Carbonara', price: 22000, category: 'pastas', available: true, stock: 12 },
+          { id: 'prod-6', name: 'Pasta Bolognesa', price: 20000, category: 'pastas', available: true, stock: 15 },
+          { id: 'prod-7', name: 'Pasta Alfredo', price: 24000, category: 'pastas', available: true, stock: 10 },
+          { id: 'prod-8', name: 'Lasagna', price: 26000, category: 'pastas', available: true, stock: 6 },
           
           // Bebidas
-          { id: 'prod-9', name: 'Coca Cola', price: 3000, category: 'bebidas', available: true },
-          { id: 'prod-10', name: 'Agua', price: 2000, category: 'bebidas', available: true },
-          { id: 'prod-11', name: 'Vino Tinto', price: 45000, category: 'bebidas', available: true },
+          { id: 'prod-9', name: 'Coca Cola', price: 3000, category: 'bebidas', available: true, stock: 50 },
+          { id: 'prod-10', name: 'Agua', price: 2000, category: 'bebidas', available: true, stock: 30 },
+          { id: 'prod-11', name: 'Vino Tinto', price: 45000, category: 'bebidas', available: true, stock: 20 },
           
           // Postres
-          { id: 'prod-12', name: 'Tiramisu', price: 12000, category: 'postres', available: true },
-          { id: 'prod-13', name: 'Panna Cotta', price: 10000, category: 'postres', available: true },
+          { id: 'prod-12', name: 'Tiramisu', price: 12000, category: 'postres', available: true, stock: 8 },
+          { id: 'prod-13', name: 'Panna Cotta', price: 10000, category: 'postres', available: true, stock: 10 },
         ],
         
         // Tipos de servicio
@@ -95,9 +95,12 @@ async function main() {
             description: 'Pedido a domicilio',
             requiresPayment: true, // Requiere pago anticipado
             requiresProducts: true, // Requiere seleccionar productos del menú
+            requiresAddress: true, // Requiere dirección/ubicación para entrega
             deliveryFee: 5000, // Costo de envío
             minOrderAmount: 20000, // Pedido mínimo
             minAdvanceMinutes: 45, // Mínimo 45 minutos de anticipación
+            // Campos específicos requeridos para este servicio
+            requiredFields: ['date', 'time', 'phone', 'products', 'address'],
           },
         },
       },

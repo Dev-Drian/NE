@@ -8,6 +8,8 @@ import { Layer2SimilarityService } from './layer2-similarity.service';
 import { DetectionResult } from '../dto/detection-result.dto';
 import { PaymentsService } from '../../payments/payments.service';
 import { ReservationsService } from '../../reservations/reservations.service';
+import { ContextBuilderService } from '../context/context-builder.service';
+import { PromptBuilderService } from './prompt-builder.service';
 import OpenAI from 'openai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
@@ -27,6 +29,8 @@ export class Layer3OpenAIService {
     private contextCache: ContextCacheService,
     private circuitBreaker: CircuitBreakerService,
     private layer2: Layer2SimilarityService,
+    private contextBuilder: ContextBuilderService,
+    private promptBuilder: PromptBuilderService,
     @Inject(forwardRef(() => PaymentsService))
     private paymentsService: PaymentsService,
     @Inject(forwardRef(() => ReservationsService))
@@ -70,16 +74,14 @@ export class Layer3OpenAIService {
 
     // Usar cache para contexto
     const contextKey = `${userId}:${companyId}`;
-    const context = await this.contextCache.getOrLoadContext(
+    const fullContext = await this.contextCache.getOrLoadContext(
       contextKey,
       () => this.conversationsService.getContext(userId, companyId)
     );
     
-    // Usar más historial de conversación para mejor contexto (últimos 15 mensajes)
-    const conversationHistory = context.conversationHistory
-      .slice(-15)
-      .map((msg) => `${msg.role === 'user' ? 'Cliente' : 'Asistente'}: ${msg.content}`)
-      .join('\n');
+    // Construir contexto comprimido e inteligente
+    const aiContext = await this.contextBuilder.buildContextForAI(userId, companyId);
+    const conversationHistory = this.contextBuilder.formatContextForPrompt(aiContext);
 
     // Obtener información contextual: pagos pendientes y reservas recientes
     let contextualInfo = '';
@@ -134,23 +136,15 @@ ${reservationsText.join('\n')}
       this.logger.warn('Error obteniendo información contextual:', error);
     }
 
-    // Información del estado actual y contexto previo mejorado
+    // Información del estado actual (ya incluida en aiContext, pero agregar detalles)
     let currentStateInfo = '';
     
-    if (context.stage === 'collecting') {
+    if (fullContext.stage === 'collecting') {
       currentStateInfo = `\n**ESTADO ACTUAL DE LA CONVERSACIÓN:**
 - Estamos en proceso de recopilar datos para una reserva
-- Datos ya recopilados: ${JSON.stringify(context.collectedData)}
-- Última intención: ${context.lastIntention || 'ninguna'}
+- Datos ya recopilados: ${JSON.stringify(fullContext.collectedData)}
+- Última intención: ${fullContext.lastIntention || 'ninguna'}
 - IMPORTANTE: Si el mensaje contiene datos (fecha, hora, comensales, teléfono, servicio), extrae SOLO los nuevos datos que aún no están en los datos recopilados.`;
-    } else if (context.conversationHistory.length > 0) {
-      // Si hay historial pero no estamos en collecting, incluir contexto general
-      const lastMessages = context.conversationHistory.slice(-3);
-      const recentContext = lastMessages
-        .map((msg) => `${msg.role === 'user' ? 'Cliente' : 'Asistente'}: ${msg.content}`)
-        .join('\n');
-      
-      currentStateInfo = `\n**CONTEXTO DE CONVERSACIÓN RECIENTE:**\n${recentContext}\n\nIMPORTANTE: Considera el contexto anterior para entender mejor la intención del usuario.`;
     }
 
 
@@ -160,145 +154,22 @@ ${reservationsText.join('\n')}
       fechaColombiaLegible: m.DateHelper.formatDateReadable(dateRefs.hoy)
     }));
 
-    // Determinar si este tipo de empresa requiere número de personas
+    // Re-hidratar services para validación/normalización post-LLM
     const config = company.config as any;
-    const isClinicType = company.type === 'clinic' || company.type === 'spa';
     const availableServices = config?.services || {};
-    const hasMultipleServices = Object.keys(availableServices).length > 1;
-    const products = config?.products || [];
-    
-    // Crear lista de servicios disponibles con sinónimos
-    let servicesInfo = '';
-    if (hasMultipleServices) {
-      const servicesList = Object.entries(availableServices)
-        .map(([key, value]: [string, any]) => {
-          // Generar sinónimos comunes según el tipo de servicio
-          const synonyms: string[] = [];
-          const serviceName = (value.name || '').toLowerCase();
-          
-          // Sinónimos para servicios comunes
-          if (key === 'domicilio' || serviceName.includes('domicilio') || serviceName.includes('delivery')) {
-            synonyms.push('pedir a domicilio', 'domicilio', 'delivery', 'a domicilio', 'envío', 'pedido a domicilio', 'quiero un domicilio', 'necesito un domicilio', 'un domicilio', 'pedir domicilio', 'domicilio para', 'que me lo traigan', 'que me lo lleven');
-          }
-          if (key === 'mesa' || serviceName.includes('mesa') || serviceName.includes('restaurante')) {
-            synonyms.push('mesa', 'restaurante', 'comer aquí', 'en el restaurante', 'reservar mesa', 'para llevar', 'pedir para llevar', 'llevar', 'take away', 'recoger', 'pasar a recoger');
-          }
-          if (key === 'limpieza' || serviceName.includes('limpieza')) {
-            synonyms.push('limpieza', 'limpieza dental', 'profilaxis');
-          }
-          if (key === 'consulta' || serviceName.includes('consulta')) {
-            synonyms.push('consulta', 'revisión', 'cita');
-          }
-          
-          const synonymsText = synonyms.length > 0 ? ` (sinónimos: ${synonyms.join(', ')})` : '';
-          return `"${key}": ${value.name}${synonymsText}`;
-        })
-        .join('\n');
-      servicesInfo = `\n\n⚠️ SERVICIOS DISPONIBLES (elegir UNO es OBLIGATORIO - DEBES EXTRAER EL SERVICIO):\n${servicesList}\n\nIMPORTANTE: Si el usuario menciona alguna variante o sinónimo del servicio, SIEMPRE extrae la KEY correspondiente en el campo "service". Ejemplos:\n- Si el usuario dice "pedir a domicilio", "domicilio", "delivery", "a domicilio", "envío", "pedido a domicilio", "quiero un domicilio", "necesito un domicilio", "un domicilio", "que me lo traigan", "que me lo lleven" → service: "domicilio"\n- Si el usuario dice "mesa", "restaurante", "comer aquí", "en el restaurante", "reservar mesa", "para llevar", "pedir para llevar", "llevar", "take away", "recoger", "pasar a recoger" → service: "mesa"\n\nATENCIÓN ESPECIAL - DETECCIÓN DE SERVICIO:\n- "domicilio", "delivery", "a domicilio", "envío", "que me lo traigan", "que me lo lleven", "llevar a casa" → service: "domicilio"\n- "para llevar" o "pedir para llevar" significa recoger en el local → service: "mesa" (NO es domicilio)\n- "mesa", "restaurante", "comer aquí", "en el local", "reservar mesa", "recoger" → service: "mesa"\n- Si el usuario dice "NO quiero que me lo traigan" o "NO quiero domicilio" → service: "mesa" (cambiar explícitamente)\n- Si el usuario dice "cita", "consulta", "revisión", "tratamiento" → service: "cita" (solo para clínicas/spas)\n\nREGLA CRÍTICA: SI EL USUARIO MENCIONA CUALQUIER VARIANTE DE UN SERVICIO, DEBES EXTRAERLO. NO DEJES service: null SI HAY UNA MENCIÓN EXPLÍCITA DEL SERVICIO.`;
-    }
-    
-    // Crear lista de productos disponibles (para que la IA pueda extraer lo que piden)
-    let productsInfo = '';
-    if (products.length > 0) {
-      const productsList = products.map((p: any) => `"${p.id}": ${p.name} (${new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0 }).format(p.price)})`).slice(0, 20).join(', ');
-      productsInfo = `\n\nPRODUCTOS/TRATAMIENTOS DISPONIBLES:\n${productsList}\nSi el usuario menciona algún producto/tratamiento, extrae su ID y nombre.`;
-    }
 
-    const prompt = `Analiza este mensaje de un cliente y responde SOLO con un JSON válido (sin markdown, sin código, solo JSON):
+    // Obtener servicio actual del contexto si estamos en proceso de reserva
+    const currentServiceKey = fullContext.collectedData?.service;
 
-FECHAS DE REFERENCIA (MUY IMPORTANTE - USA ESTAS EXACTAMENTE):
-- HOY: ${dateRefs.hoy} (${dateRefs.diaHoy})
-- MAÑANA: ${dateRefs.manana} (${dateRefs.diaManana})
-- PASADO MAÑANA: ${dateRefs.pasadoManana} (${dateRefs.diaPasadoManana})
-
-PRÓXIMOS DÍAS DE LA SEMANA (si el usuario menciona solo el nombre del día):
-- Próximo lunes: ${dateRefs.proximosDias['lunes']}
-- Próximo martes: ${dateRefs.proximosDias['martes']}
-- Próximo miércoles: ${dateRefs.proximosDias['miércoles']}
-- Próximo jueves: ${dateRefs.proximosDias['jueves']}
-- Próximo viernes: ${dateRefs.proximosDias['viernes']}
-- Próximo sábado: ${dateRefs.proximosDias['sábado']}
-- Próximo domingo: ${dateRefs.proximosDias['domingo']}
-
-Contexto: Cliente de ${company.name} (tipo: ${company.type})
-Mensaje: "${message}"${servicesInfo}${productsInfo}
-
-${conversationHistory ? `Conversación previa:\n${conversationHistory}\n` : ''}
-${currentStateInfo}${contextualInfo}
-
-INSTRUCCIONES CRÍTICAS:
-
-1. EXTRACCIÓN DE DATOS - EXTRAE **SOLO** LO QUE EL USUARIO MENCIONA EXPLÍCITAMENTE:
-   
-   FECHAS (usar formato YYYY-MM-DD - USA LAS FECHAS DE REFERENCIA):
-   - **IMPORTANTE**: Solo extraer si el usuario menciona una fecha explícitamente
-   - Si NO menciona fecha → date: null
-   - "hoy" → ${dateRefs.hoy}
-   - "mañana" → ${dateRefs.manana}
-   - "pasado mañana" → ${dateRefs.pasadoManana}
-   - Si dice solo "lunes", "martes", "viernes", etc → Usa el PRÓXIMO día de la lista de PRÓXIMOS DÍAS DE LA SEMANA
-   - "el viernes" → ${dateRefs.proximosDias['viernes']}
-   - "para el lunes" → ${dateRefs.proximosDias['lunes']}
-   - Si solo menciona hora SIN fecha → date: null (NO asumas hoy automáticamente)
-   
-   HORAS (usar formato HH:MM en 24 horas):
-   - **IMPORTANTE**: Solo extraer si el usuario menciona una hora explícitamente
-   - Si NO menciona hora → time: null
-   - "4 PM", "4 de la tarde", "las 4" (tarde) → "16:00"
-   - "8 PM", "8 de la noche" → "20:00"
-   - "9 AM", "9 de la mañana" → "09:00"
-   - "9 PM" → "21:00"
-   - "mediodía" → "12:00"
-   
-   TELÉFONO: Extrae cualquier secuencia de números que parezca teléfono (8-10 dígitos)
-   - "mi numero es 45353535" → phone: "45353535"
-   - "llamame al 3001234567" → phone: "3001234567"
-   
-   ${hasMultipleServices ? '⚠️ SERVICIO (MUY IMPORTANTE - OBLIGATORIO): Debes SIEMPRE extraer el servicio mencionado usando la KEY exacta de la lista de SERVICIOS DISPONIBLES arriba. Busca cualquier mención del servicio en el mensaje del usuario:\n   - Si el usuario dice "pedir a domicilio", "domicilio", "delivery", "a domicilio", "envío", "pedido a domicilio", "quiero un domicilio", "necesito un domicilio", "un domicilio", "que me lo traigan", "que me lo lleven" → service: "domicilio"\n   - Si el usuario dice "mesa", "restaurante", "comer aquí", "en el restaurante", "reservar mesa", "para llevar", "pedir para llevar", "llevar", "take away", "recoger", "pasar a recoger" → service: "mesa"\n   - Si el usuario dice "NO quiero que me lo traigan", "NO quiero domicilio", "no quiero que me la traigan" → service: "mesa" (cambiar de domicilio a mesa)\n   - Si el usuario dice variantes de "limpieza" o "consulta" → busca la key correspondiente\n   - ATENCIÓN: "pedir para llevar" o "para llevar" significa recoger en el restaurante → service: "mesa" (NO "domicilio")\n   - SIEMPRE busca coincidencias con las keys y sinónimos listados en SERVICIOS DISPONIBLES\n   - NO dejes service: null si hay cualquier mención de un servicio en el mensaje' : ''}
-   
-   PRODUCTOS CON CANTIDADES (CRÍTICO - EXTRAER CANTIDADES):
-   - **IMPORTANTE**: Extrae PRODUCTOS y sus CANTIDADES del mensaje
-   - Formato: Array de objetos con {id: "prod-X", quantity: número}
-   - Ejemplos:
-     * "2 pizzas margherita" → [{id: "prod-1", quantity: 2}]
-     * "quiero una pizza y 3 cocas" → [{id: "prod-1", quantity: 1}, {id: "prod-9", quantity: 3}]
-     * "4 lasagnas y 2 vinos tintos" → [{id: "prod-8", quantity: 4}, {id: "prod-11", quantity: 2}]
-   - Si NO menciona cantidad, usar quantity: 1
-   - Busca en la lista de PRODUCTOS DISPONIBLES los IDs correctos
-   
-   PERSONAS/COMENSALES: ${isClinicType ? 'NO extraer - las clínicas y spas NO necesitan número de personas (siempre es 1)' : '"para 2", "somos 4", "2 personas" → guests: número'}
-
-2. DETECTAR INTENCIÓN (ANALIZA EL CONTEXTO COMPLETO):
-   - "reservar": El usuario QUIERE hacer una reserva (verbos: quiero, necesito, quisiera, agendar)
-   - "consultar": Solo pregunta sin intención de reservar, O está respondiendo sobre pagos/reservas existentes
-   - "cancelar": Quiere cancelar
-   - "otro": Otros casos
-   
-   IMPORTANTE: Si hay un PAGO PENDIENTE y el usuario dice "ok", "vale", "ya pagué", "apague", etc., 
-   la intención debe ser "consultar" y debes dar una respuesta coherente sobre el pago.
-   
-   Si hay RESERVAS ACTIVAS y el usuario pregunta sobre ellas o menciona "mi reserva", "mi cita", etc.,
-   la intención debe ser "consultar" y debes responder sobre la reserva.
-
-3. missingFields: ${isClinicType 
-  ? `Para clínicas/spas, los campos REQUERIDOS son: fecha, hora, teléfono${hasMultipleServices ? ', servicio' : ''} (NO incluir comensales/guests)` 
-  : `Para restaurantes/salones, los campos REQUERIDOS son: fecha, hora, teléfono, comensales${hasMultipleServices ? ', servicio' : ''}`}
-   Lista SOLO los campos que NO están en el mensaje Y son necesarios.
-
-Responde SOLO con este JSON:
-{
-  "intention": "reservar" | "cancelar" | "consultar" | "otro",
-  "confidence": 0.0-1.0,
-  "extractedData": {
-    "date": "YYYY-MM-DD o null",
-    "time": "HH:MM o null",
-    ${isClinicType ? '' : '"guests": número o null,'}
-    "phone": "string o null",
-    "name": "string o null"${hasMultipleServices ? ',\n    "service": "key_del_servicio o null"' : ''}
-  },
-  "missingFields": ["campo1", "campo2"] o [],
-  "suggestedReply": "texto contextualizado y ESPECÍFICO para responder basado en el contexto completo. DEBES SER ESPECÍFICO:\n- Si hay pago pendiente y el usuario dice 'ok', 'vale', 'ya pagué', 'apague', etc.: confirma el estado del pago, proporciona el link si está disponible, o pregunta si necesita ayuda.\n- Si hay reservas activas y el usuario pregunta sobre ellas: menciona los detalles ESPECÍFICOS (fecha, hora, servicio, estado) de la reserva más reciente.\n- Si el usuario intenta reservar una fecha/hora que ya tiene reservada: informa específicamente que ya tiene una reserva para esa fecha/hora y pregunta si quiere modificar o cancelar.\n- NO uses respuestas genéricas como 'Ya tienes una reserva confirmada' sin dar detalles. SIEMPRE incluye información específica (fecha, hora, servicio, estado del pago si aplica)."
-}`;
+    const { prompt, hasMultipleServices } = await this.promptBuilder.buildPrompt({
+      company,
+      message,
+      dateRefs,
+      conversationContextText: conversationHistory,
+      currentStateInfo,
+      contextualInfo,
+      serviceKey: currentServiceKey, // Pasar servicio actual para construir prompt dinámico
+    });
 
     try {
       // Verificar si el circuit breaker está abierto antes de intentar

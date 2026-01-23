@@ -10,6 +10,8 @@ export interface ConversationState {
     products?: Array<{ id: string; quantity: number }>;
     treatment?: string;
     product?: string;
+    address?: string; // Dirección/ubicación para domicilio
+    tableId?: string; // Mesa específica si se menciona
   };
   conversationHistory: Array<{
     role: 'user' | 'assistant';

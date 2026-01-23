@@ -10,10 +10,25 @@ const KEYWORD_CATEGORIES = {
   farewell: ['gracias', 'listo gracias', 'perfecto gracias', 'ok gracias', 'vale gracias', 'adiós', 'adios', 'chao', 'hasta luego', 'nos vemos', 'bye'],
   products: ['menu', 'productos', 'que tienen', 'opciones', 'carta', 'que hay', 'que venden', 'que ofrecen', 'servicios', 'tratamientos', 'que servicios', 'cuales servicios'],
   paraLlevar: ['para llevar', 'pedir para llevar', 'llevar', 'take away', 'recoger', 'pasar a recoger'],
-  consulta: ['horario', 'horarios', 'abren', 'cierran', 'atencion', 'que dias', 'cual es el horario', 'cuando abren', 'direccion', 'ubicacion', 'donde estan'],
-  price: ['cuanto cuesta', 'precio de', 'precio del', 'cuanto vale', 'costo de', 'costo del'],
+  consulta: [
+    'horario', 'horarios', 'abren', 'cierran', 'atencion', 'que dias', 
+    'cual es el horario', 'cuando abren', 'direccion', 'ubicacion', 'donde estan',
+    'tienen disponibilidad', 'hay disponibilidad', 'disponible', 'que tienen',
+    'que servicios', 'que productos', 'cuales servicios', 'cuales productos'
+  ],
+  price: [
+    'cuanto cuesta', 'precio de', 'precio del', 'cuanto vale', 'costo de', 'costo del',
+    'cuanto sale', 'precio', 'vale', 'cuesta'
+  ],
   reservar: ['reservar', 'reserva', 'cita', 'agendar', 'quiero', 'necesito', 'deseo'],
-  cancelar: ['cancelar', 'cancelar mi reserva', 'cancelar reserva'],
+  cancelar: [
+    'cancelar', 'cancelar mi reserva', 'cancelar reserva', 'cancelar cita', 
+    'cancelar pedido', 'anular', 'anular reserva', 'anular cita', 'anular pedido',
+    'anular mi reserva', 'necesito anular', 'quiero anular', 'deseo anular',
+    'eliminar', 'eliminar reserva', 'eliminar cita', 'eliminar pedido',
+    'borrar', 'borrar reserva', 'no quiero', 'no necesito', 'deseo cancelar',
+    'quiero cancelar', 'necesito cancelar', 'mejor cancelar', 'cancelar por favor'
+  ],
   payment: ['pago', 'pagar', 'apague', 'apagar', 'pagado', 'pagaste', 'pagamos', 'pague', 'pague ya', 'ya pague', 'falta pagar', 'debo pagar', 'link de pago', 'link pago', 'pago pendiente', 'pago falta'],
   history: ['mis pedidos', 'mis domicilios', 'mis reservas', 'mis citas', 'cuantos pedidos', 'cuantos domicilios', 'cuantas reservas', 'historial', 'pedidos anteriores', 'que he pedido', 'pedidos previos', 'mis ordenes', 'cuantos llevo', 'cuantas llevo', 'ultimos pedidos', 'ultimas reservas'],
 };

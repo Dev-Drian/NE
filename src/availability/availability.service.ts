@@ -6,6 +6,7 @@ export interface AvailabilityCheck {
   isAvailable: boolean;
   alternatives?: string[];
   message?: string;
+  reason?: string; // Razón de no disponibilidad: 'time_out_of_range', 'capacity_full', 'duplicate', etc.
 }
 
 @Injectable()
@@ -38,9 +39,31 @@ export class AvailabilityService {
       capacity = resources.reduce((sum: number, r: any) => sum + (r.capacity || 0), 0);
     }
 
-    // VALIDACIÓN 1: No permitir reservas en el pasado
-    const now = new Date();
+    // VALIDACIÓN 1: Validar formato de fecha
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!dateRegex.test(data.date)) {
+      return {
+        isAvailable: false,
+        message: '❌ Formato de fecha inválido. Por favor usa el formato YYYY-MM-DD (ej: 2025-01-25).',
+      };
+    }
+
+    // VALIDACIÓN 2: Validar que la fecha es válida (no 32 de enero, etc.)
     const [year_req, month_req, day_req] = data.date.split('-').map(Number);
+    const testDate = new Date(year_req, month_req - 1, day_req);
+    if (
+      testDate.getFullYear() !== year_req ||
+      testDate.getMonth() !== month_req - 1 ||
+      testDate.getDate() !== day_req
+    ) {
+      return {
+        isAvailable: false,
+        message: '❌ Fecha inválida (ej: 32 de enero). Por favor elige una fecha válida.',
+      };
+    }
+
+    // VALIDACIÓN 3: No permitir reservas en el pasado
+    const now = new Date();
     const [hours_req, minutes_req] = data.time.split(':').map(Number);
     const requestedDateTime = new Date(year_req, month_req - 1, day_req, hours_req, minutes_req);
     
@@ -51,7 +74,7 @@ export class AvailabilityService {
       };
     }
     
-    // VALIDACIÓN 2: Tiempo mínimo de anticipación (por defecto 1 hora)
+    // VALIDACIÓN 4: Tiempo mínimo de anticipación (por defecto 1 hora)
     const minAdvanceHours = config?.minAdvanceHours || 1;
     const hoursUntilReservation = (requestedDateTime.getTime() - now.getTime()) / (1000 * 60 * 60);
     
@@ -70,9 +93,21 @@ export class AvailabilityService {
     const businessHours = hours[dayName];
 
     if (!businessHours || businessHours.toLowerCase() === 'cerrado') {
+      // Obtener siguiente día disponible
+      const nextAvailableDay = this.getNextAvailableDay(date, hours);
+      const nextDayName = this.getDayName(nextAvailableDay.getDay());
+      const nextDaySpanish = this.getDayNameSpanish(nextDayName);
+      const nextDateStr = nextAvailableDay.toLocaleDateString('es-ES', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+      });
+      
       return {
         isAvailable: false,
-        message: `No hay servicio el ${dayName}`,
+        message: `❌ Lo siento, estamos cerrados los ${this.getDayNameSpanish(dayName)}. ¿Te gustaría agendar para ${nextDateStr}?`,
+        alternatives: this.getAvailableDays(hours, date),
+        reason: 'closed_day',
       };
     }
 
@@ -96,10 +131,14 @@ export class AvailabilityService {
     }
 
     if (!this.isTimeInRange(requestedTime, openTime, closeTime)) {
+      // Generar alternativas más inteligentes (horas cercanas a la solicitada)
+      const alternatives = this.generateTimeAlternatives(openTime, closeTime, requestedTime);
+      
       return {
         isAvailable: false,
         message: `Horario de atención: ${openTime} - ${closeTime}`,
-        alternatives: this.generateTimeAlternatives(openTime, closeTime),
+        alternatives,
+        reason: 'time_out_of_range', // Agregar razón para mejor manejo
       };
     }
 
@@ -235,6 +274,66 @@ export class AvailabilityService {
     return days[dayIndex];
   }
 
+  private getDayNameSpanish(dayName: string): string {
+    const translations: Record<string, string> = {
+      sunday: 'domingos',
+      monday: 'lunes',
+      tuesday: 'martes',
+      wednesday: 'miércoles',
+      thursday: 'jueves',
+      friday: 'viernes',
+      saturday: 'sábados',
+    };
+    return translations[dayName] || dayName;
+  }
+
+  private getNextAvailableDay(currentDate: Date, hours: Record<string, string>): Date {
+    let nextDate = new Date(currentDate);
+    nextDate.setDate(nextDate.getDate() + 1);
+    
+    // Buscar hasta 7 días adelante
+    for (let i = 0; i < 7; i++) {
+      const dayName = this.getDayName(nextDate.getDay());
+      const businessHours = hours[dayName];
+      
+      if (businessHours && businessHours.toLowerCase() !== 'cerrado') {
+        return nextDate;
+      }
+      
+      nextDate.setDate(nextDate.getDate() + 1);
+    }
+    
+    return nextDate;
+  }
+
+  private getAvailableDays(hours: Record<string, string>, fromDate: Date): string[] {
+    const availableDays: string[] = [];
+    const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    
+    let checkDate = new Date(fromDate);
+    checkDate.setDate(checkDate.getDate() + 1);
+    
+    // Buscar próximos 7 días disponibles
+    for (let i = 0; i < 7 && availableDays.length < 3; i++) {
+      const dayName = this.getDayName(checkDate.getDay());
+      const businessHours = hours[dayName];
+      
+      if (businessHours && businessHours.toLowerCase() !== 'cerrado') {
+        const daySpanish = this.getDayNameSpanish(dayName);
+        const dateStr = checkDate.toLocaleDateString('es-ES', {
+          weekday: 'long',
+          day: 'numeric',
+          month: 'long',
+        });
+        availableDays.push(`${daySpanish} ${dateStr}`);
+      }
+      
+      checkDate.setDate(checkDate.getDate() + 1);
+    }
+    
+    return availableDays;
+  }
+
   private isTimeInRange(time: string, start: string, end: string): boolean {
     if (!time || !start || !end) {
       return false;
@@ -259,15 +358,44 @@ export class AvailabilityService {
     const endMinutes = this.timeToMinutes(end);
     const excludeMinutes = excludeTime ? this.timeToMinutes(excludeTime) : null;
 
-    // Generar alternativas cada 30 minutos
-    for (let minutes = startMinutes; minutes <= endMinutes; minutes += 30) {
-      if (excludeMinutes && Math.abs(minutes - excludeMinutes) < 30) {
-        continue;
+    // Si hay una hora excluida (fuera del rango), generar alternativas cercanas
+    if (excludeMinutes) {
+      // Si la hora está antes del horario, sugerir las primeras horas disponibles
+      if (excludeMinutes < startMinutes) {
+        for (let minutes = startMinutes; minutes <= Math.min(startMinutes + 120, endMinutes); minutes += 30) {
+          const hours = Math.floor(minutes / 60);
+          const mins = minutes % 60;
+          alternatives.push(`${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`);
+          if (alternatives.length >= 3) break;
+        }
       }
-      const hours = Math.floor(minutes / 60);
-      const mins = minutes % 60;
-      alternatives.push(`${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`);
-      if (alternatives.length >= 3) break;
+      // Si la hora está después del horario, sugerir las últimas horas disponibles
+      else if (excludeMinutes > endMinutes) {
+        for (let minutes = Math.max(endMinutes - 120, startMinutes); minutes <= endMinutes; minutes += 30) {
+          const hours = Math.floor(minutes / 60);
+          const mins = minutes % 60;
+          alternatives.push(`${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`);
+          if (alternatives.length >= 3) break;
+        }
+        // Revertir para mostrar las más cercanas primero
+        alternatives.reverse();
+      }
+    }
+
+    // Si no hay alternativas generadas o son pocas, generar las primeras disponibles
+    if (alternatives.length < 3) {
+      for (let minutes = startMinutes; minutes <= endMinutes; minutes += 30) {
+        if (excludeMinutes && Math.abs(minutes - excludeMinutes) < 30) {
+          continue;
+        }
+        const hours = Math.floor(minutes / 60);
+        const mins = minutes % 60;
+        const timeStr = `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
+        if (!alternatives.includes(timeStr)) {
+          alternatives.push(timeStr);
+        }
+        if (alternatives.length >= 3) break;
+      }
     }
 
     return alternatives;
