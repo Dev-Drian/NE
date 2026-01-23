@@ -1,0 +1,47 @@
+# ------------------------------------------------------
+# THIS FILE WAS AUTOMATICALLY GENERATED (DO NOT MODIFY)
+# ------------------------------------------------------
+
+type ConversationFields {
+  address: String
+  date: String
+  guests: Float
+  name: String
+  phone: String
+  products: [String!]
+  service: String
+  tableId: String
+  time: String
+}
+
+type ConversationStateResponse {
+  fields: ConversationFields!
+  intent: String
+  metadata: String
+  state: String!
+}
+
+type Mutation {
+  processMessage(input: ProcessMessageInput!): ProcessMessageResponse!
+  resetConversation(companyId: String!, userId: String!): ConversationStateResponse!
+}
+
+input ProcessMessageInput {
+  companyId: String!
+  message: String!
+  phone: String
+  userId: String!
+}
+
+type ProcessMessageResponse {
+  confidence: Float!
+  conversationId: String
+  conversationState: String!
+  intention: String!
+  missingFields: [String!]!
+  reply: String!
+}
+
+type Query {
+  getConversationState(companyId: String!, userId: String!): ConversationStateResponse!
+}

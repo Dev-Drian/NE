@@ -1,9 +1,5 @@
-import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
-import { AppModule } from './app.module';
-import * as dotenv from 'dotenv';
-
 // Suprimir warning de punycode (deprecation warning de Node.js 21+)
+// Debe estar antes de cualquier import para que funcione correctamente
 process.removeAllListeners('warning');
 process.on('warning', (warning) => {
   if (warning.name === 'DeprecationWarning' && warning.message.includes('punycode')) {
@@ -13,6 +9,11 @@ process.on('warning', (warning) => {
   // Mostrar otros warnings
   console.warn(warning.name, warning.message);
 });
+
+import { NestFactory } from '@nestjs/core';
+import { ValidationPipe } from '@nestjs/common';
+import { AppModule } from './app.module';
+import * as dotenv from 'dotenv';
 
 // Polyfill para fetch, Headers, Request, Response (requerido por Gemini SDK en Node.js < 18)
 import fetch, { Headers, Request, Response } from 'node-fetch';
