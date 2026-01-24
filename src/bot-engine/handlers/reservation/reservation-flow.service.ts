@@ -55,11 +55,81 @@ export class ReservationFlowService {
     const previousData = { ...context.collectedData };
 
     const extracted = detection.extractedData || {};
+    
+    // Detectar si el usuario quiere REEMPLAZAR (palabras como "solo", "mejor", "entonces")
+    const wantsToReplace = /\b(solo|solamente|mejor|entonces|cambiar|cambia|quiero|dame|pon|ponme)\b/i.test(dto.message);
+    
+    // Filtrar datos extraídos: excluir arrays vacíos y valores null/undefined
+    // También manejar productos de forma especial
+    const filteredExtracted = Object.fromEntries(
+      Object.entries(extracted).filter(([key, value]) => {
+        if (value === null || value === undefined) return false;
+        // No sobreescribir productos existentes con array vacío
+        if (key === 'products' && Array.isArray(value) && value.length === 0) return false;
+        return true;
+      }),
+    );
+    
+    // Manejar merge de productos de OpenAI de forma especial
+    let mergedProductsFromAI: any[] | undefined;
+    if (filteredExtracted.products && Array.isArray(filteredExtracted.products) && filteredExtracted.products.length > 0) {
+      // Prioridad de productos existentes:
+      // 1. Los productos actuales en collectedData (pueden ser válidos después de error de stock)
+      // 2. Los productos del último intento fallido (si no hay productos actuales)
+      let existingProducts = Array.isArray(previousData.products) && previousData.products.length > 0 
+        ? [...previousData.products] 
+        : [];
+      
+      // Si no hay productos actuales pero hay un intento anterior guardado
+      if (existingProducts.length === 0 && context.metadata?.lastProductsAttempt) {
+        existingProducts = [...context.metadata.lastProductsAttempt];
+      }
+      
+      // Si hay productos inválidos guardados, el usuario probablemente está corrigiendo esos
+      const wasCorrectingStock = context.metadata?.unavailableProducts?.length > 0;
+      
+      const newProducts = filteredExtracted.products;
+      
+      // Si estaba corrigiendo un error de stock, siempre reemplazar la cantidad del producto
+      if (wantsToReplace || wasCorrectingStock) {
+        // Si quiere reemplazar, actualizar cantidades de productos existentes
+        // pero mantener los productos que no se mencionaron
+        mergedProductsFromAI = [...existingProducts];
+        
+        for (const newProd of newProducts) {
+          const existingIndex = mergedProductsFromAI.findIndex((p: any) => p.id === newProd.id);
+          if (existingIndex >= 0) {
+            mergedProductsFromAI[existingIndex].quantity = newProd.quantity;
+          } else {
+            mergedProductsFromAI.push(newProd);
+          }
+        }
+      } else {
+        // Si no quiere reemplazar, sumar cantidades
+        mergedProductsFromAI = [...existingProducts];
+        
+        for (const newProd of newProducts) {
+          const existingIndex = mergedProductsFromAI.findIndex((p: any) => p.id === newProd.id);
+          if (existingIndex >= 0) {
+            mergedProductsFromAI[existingIndex].quantity += newProd.quantity;
+          } else {
+            mergedProductsFromAI.push(newProd);
+          }
+        }
+      }
+      
+      // Usar el merge en lugar del array de OpenAI
+      filteredExtracted.products = mergedProductsFromAI;
+      
+      // Limpiar metadata de productos inválidos si el merge fue exitoso
+      if (wasCorrectingStock) {
+        // Se limpiará al actualizar el estado
+      }
+    }
+    
     const collected: any = {
       ...context.collectedData,
-      ...Object.fromEntries(
-        Object.entries(extracted).filter(([_, value]) => value !== null && value !== undefined),
-      ),
+      ...filteredExtracted,
     };
 
     // Identificar datos nuevos del mensaje actual
@@ -71,12 +141,22 @@ export class ReservationFlowService {
     }
 
     // Si cambia de servicio, limpiar datos específicos del servicio anterior
-    if (extracted.service && previousData.service && extracted.service !== previousData.service) {
+    // NOTA: NO borrar phone, date, time - son datos genéricos válidos para cualquier servicio
+    // Solo limpiar si REALMENTE cambia de servicio (no si OpenAI repite el mismo servicio)
+    const realServiceChange = extracted.service && 
+                              previousData.service && 
+                              extracted.service !== previousData.service;
+    if (realServiceChange) {
       delete collected.products;
-      delete collected.phone;
       delete collected.treatment;
       delete collected.product;
       delete collected.address; // Limpiar dirección si cambia de servicio
+      // phone, date, time se mantienen porque son válidos para cualquier tipo de reserva
+    }
+    
+    // Si ya hay un servicio establecido y OpenAI extrae el mismo, NO lo consideramos como "nuevo"
+    if (extracted.service && previousData.service === extracted.service) {
+      delete newData.service; // No es dato "nuevo"
     }
 
     // Regla: si dice que NO quiere domicilio, pasar a mesa (si existe)
@@ -88,8 +168,11 @@ export class ReservationFlowService {
     }
 
     // Mapear productos/tratamientos a IDs del catálogo con cantidades
+    // SOLO si OpenAI NO extrajo productos (evitar doble merge)
+    const openAIExtractedProducts = extracted.products && Array.isArray(extracted.products) && extracted.products.length > 0;
     const catalogProducts = Array.isArray(config?.products) ? config.products : [];
-    if (catalogProducts.length > 0) {
+    
+    if (catalogProducts.length > 0 && !openAIExtractedProducts) {
       const normalizedMsg = this.textUtils.normalizeText(dto.message.toLowerCase());
       const foundProducts: Array<{ id: string; quantity: number }> = [];
 
@@ -121,12 +204,24 @@ export class ReservationFlowService {
 
       if (foundProducts.length > 0) {
         const existing = Array.isArray(collected.products) ? collected.products : [];
-        const mergedProducts = [...existing];
+        
+        // Detectar si el usuario quiere REEMPLAZAR cantidad (palabras como "solo", "mejor", "entonces", "cambiar", "quiero")
+        const wantsToReplace = /\b(solo|solamente|mejor|entonces|cambiar|cambia|quiero|dame|pon|ponme)\b/i.test(dto.message);
+        
+        let mergedProducts = [...existing];
 
         for (const newProd of foundProducts) {
           const existingIndex = mergedProducts.findIndex((p: any) => p.id === newProd.id);
-          if (existingIndex >= 0) mergedProducts[existingIndex].quantity += newProd.quantity;
-          else mergedProducts.push(newProd);
+          if (existingIndex >= 0) {
+            // Si quiere reemplazar, usar la nueva cantidad; si no, sumar
+            if (wantsToReplace) {
+              mergedProducts[existingIndex].quantity = newProd.quantity;
+            } else {
+              mergedProducts[existingIndex].quantity += newProd.quantity;
+            }
+          } else {
+            mergedProducts.push(newProd);
+          }
         }
 
         collected.products = mergedProducts;
@@ -181,7 +276,7 @@ export class ReservationFlowService {
         },
       };
     }
-
+    
     // Resolver reglas del servicio (GENÉRICO por configuración)
     const strategy = this.serviceRegistry.getReservationStrategy(companyType, collected.service);
     const resolution = await strategy.resolve(company, companyType, collected.service);
@@ -198,10 +293,11 @@ export class ReservationFlowService {
     if (collected.service === 'domicilio' && resolution.validatorConfig.requiresProducts) {
       const hasProducts = collected.products && Array.isArray(collected.products) && collected.products.length > 0;
       if (!hasProducts && !missing.includes('products')) {
-        missing.push('products');
+        // Insertar 'products' al INICIO del array para pedir productos primero
+        missing.unshift('products');
       }
     }
-
+    
     if (missing.length > 0) {
       const missingFieldsSpanish = missing.map((f) => resolution.missingFieldLabels[f] || f);
 
@@ -249,6 +345,9 @@ export class ReservationFlowService {
             ...context.metadata,
             hasAskedAllFields: missing.length > 1 && !hasAskedAllFields,
             lastFieldAsked: missing[0],
+            // Limpiar metadata de corrección de stock si productos ahora son válidos
+            unavailableProducts: undefined,
+            lastProductsAttempt: undefined,
           },
         },
         missingFields: missingFieldsSpanish,
@@ -332,6 +431,48 @@ export class ReservationFlowService {
     );
 
     if (!resourceValidation.isValid) {
+      // Si hay error de productos (stock insuficiente), guardar productos y dar mensaje inteligente
+      const hasProductError = resourceValidation.unavailableItems && resourceValidation.unavailableItems.length > 0;
+      
+      if (hasProductError && collected.products) {
+        // Separar productos válidos de los que tienen problemas
+        const unavailableIds = new Set(resourceValidation.unavailableItems!.map((i: any) => i.id));
+        const validProducts = collected.products.filter((p: any) => !unavailableIds.has(p.id));
+        const invalidProducts = collected.products.filter((p: any) => unavailableIds.has(p.id));
+        
+        // Construir mensaje más inteligente
+        let replyMsg = resourceValidation.message || '❌ Hay un problema con algunos productos.';
+        
+        if (validProducts.length > 0) {
+          const productNames = validProducts.map((p: any) => {
+            const product = catalogProducts.find((cp: any) => cp.id === p.id);
+            return product ? `${p.quantity}x ${product.name}` : `${p.quantity}x ${p.id}`;
+          }).join(', ');
+          replyMsg += `\n\n✅ Estos productos sí están disponibles: ${productNames}`;
+        }
+        
+        replyMsg += `\n\n¿Quieres ajustar las cantidades o elegir otros productos?`;
+        
+        return {
+          reply: replyMsg,
+          newState: {
+            ...context,
+            collectedData: {
+              ...collected,
+              products: validProducts, // Mantener solo los productos válidos
+            },
+            stage: 'collecting',
+            lastIntention: 'reservar',
+            metadata: {
+              ...context.metadata,
+              lastProductsAttempt: collected.products, // Guardar todos para referencia
+              unavailableProducts: resourceValidation.unavailableItems, // Guardar cuáles fallaron
+            },
+          },
+        };
+      }
+      
+      // Error no relacionado con productos
       return {
         reply: resourceValidation.message || 'No hay disponibilidad de recursos.',
         newState: {
@@ -388,8 +529,35 @@ export class ReservationFlowService {
           const existingPayment = await this.paymentsService.getPendingPayment(conversationId);
 
           let paymentUrl: string | null = null;
-          if (existingPayment?.paymentUrl) paymentUrl = existingPayment.paymentUrl;
-          else {
+          let reservationId: string | null = context.metadata?.reservationId || null;
+          
+          // SIEMPRE crear reserva si no existe una para este pedido
+          if (!reservationId) {
+            const reservation = await this.reservations.create({
+              company: { connect: { id: dto.companyId } },
+              userId: dto.userId,
+              date: collected.date!,
+              time: collected.time!,
+              guests: collected.guests || settings.defaultGuests || 1,
+              phone: collected.phone,
+              name: collected.name,
+              service: collected.service,
+              status: 'pending', // Pendiente hasta que se confirme el pago
+              metadata: {
+                products: collected.products,
+                treatment: collected.treatment || collected.product,
+                address: collected.address,
+                tableId: collected.tableId,
+              },
+            });
+            reservationId = reservation.id;
+            console.log(`✅ Reserva creada con ID: ${reservationId}, status: pending`);
+          }
+          
+          // Crear pago solo si no existe
+          if (existingPayment?.paymentUrl) {
+            paymentUrl = existingPayment.paymentUrl;
+          } else {
             const user = await this.usersService.findOne(dto.userId);
             const payment = await this.paymentsService.createPayment({
               companyId: dto.companyId,
@@ -404,10 +572,37 @@ export class ReservationFlowService {
 
           let reply = `📋 Resumen de tu ${resolution.reservationNoun}:\n\n`;
           reply += `📅 Fecha: ${DateHelper.formatDateReadable(collected.date!)}\n`;
-          reply += `🕐 Hora: ${collected.time}\n`;
+          reply += `🕐 Hora: ${DateHelper.formatTimeReadable(collected.time!)}\n`;
           if (collected.service && availableServices[collected.service]) {
             reply += `🏷️ Servicio: ${availableServices[collected.service].name}\n`;
           }
+          
+          // Mostrar productos si los hay
+          if (requiresProducts && collected.products) {
+            const products = config?.products || [];
+            const productsList = Array.isArray(collected.products) ? collected.products : [];
+            reply += `\n🛒 Productos:\n`;
+            
+            let subtotal = 0;
+            for (const item of productsList) {
+              if (typeof item === 'object' && (item as any).id) {
+                const product = products.find((p: any) => p.id === (item as any).id);
+                if (product) {
+                  const quantity = (item as any).quantity || 1;
+                  const itemTotal = (product.price || 0) * quantity;
+                  subtotal += itemTotal;
+                  reply += `   • ${quantity}x ${product.name} - $${itemTotal.toLocaleString('es-CO')}\n`;
+                }
+              }
+            }
+            
+            const deliveryFee = selectedService?.deliveryFee || 0;
+            if (deliveryFee > 0) {
+              reply += `   • Envío - $${deliveryFee.toLocaleString('es-CO')}\n`;
+            }
+            reply += `\n💰 Total: $${paymentAmount.toLocaleString('es-CO')}\n`;
+          }
+          
           reply += `\n💳 Anticipo requerido: $${finalAmount.toLocaleString('es-CO')} (${paymentPercentage}% del total)`;
           reply += `\n\n⚠️ Para confirmar tu ${resolution.reservationNoun}, debes realizar el pago.`;
           if (paymentUrl) reply += `\n\n🔗 Realiza el pago aquí: ${paymentUrl}`;
@@ -420,6 +615,10 @@ export class ReservationFlowService {
               collectedData: collected,
               stage: 'awaiting_payment',
               lastIntention: 'reservar',
+              metadata: {
+                ...context.metadata,
+                reservationId, // Guardar ID de reserva para actualizarla cuando pague
+              },
             },
             missingFields: [],
           };

@@ -36,7 +36,14 @@ export class ServiceValidatorService {
     const required = this.getRequiredFields(serviceConfig);
 
     // 2. Buscar datos en collectedData actual
-    let missing = required.filter((f) => !collectedData[f]);
+    // IMPORTANTE: Para products, verificar que sea un array NO vacío
+    let missing = required.filter((f) => {
+      const value = collectedData[f];
+      if (value === null || value === undefined) return true;
+      // Para arrays (como products), verificar que tenga elementos
+      if (Array.isArray(value) && value.length === 0) return true;
+      return false;
+    });
 
     // 3. Si hay contexto histórico y faltan campos, buscar en el historial
     if (missing.length > 0 && context?.conversationHistory) {
@@ -71,20 +78,29 @@ export class ServiceValidatorService {
     }
 
     // Si no, construir desde flags booleanos
-    const required: string[] = ['date', 'time', 'phone'];
-
-    // Campos dinámicos según configuración
+    const required: string[] = [];
+    
+    // Para servicios con productos (domicilio, delivery), pedir productos PRIMERO
     if (serviceConfig.requiresProducts) {
       required.push('products');
     }
+    
+    // Luego los campos base
+    required.push('date', 'time');
+    
+    // Dirección antes del teléfono para domicilios
+    if (serviceConfig.requiresAddress || serviceConfig.requiresLocation) {
+      required.push('address');
+    }
+    
+    required.push('phone');
+    
+    // Campos adicionales
     if (serviceConfig.requiresGuests) {
       required.push('guests');
     }
     if (serviceConfig.requiresTable) {
       required.push('tableId');
-    }
-    if (serviceConfig.requiresAddress || serviceConfig.requiresLocation) {
-      required.push('address');
     }
 
     return required;

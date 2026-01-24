@@ -12,6 +12,16 @@ export class CancelHandler implements IIntentionHandler {
     private reservationsService: ReservationsService,
   ) {}
 
+  /**
+   * Convierte hora de 24h a 12h
+   */
+  private formatTime12h(timeStr: string): string {
+    const [hours, minutes] = timeStr.split(':').map(Number);
+    const period = hours >= 12 ? 'PM' : 'AM';
+    const hour12 = hours % 12 || 12;
+    return `${hour12}:${String(minutes).padStart(2, '0')} ${period}`;
+  }
+
   async handle(context: IntentionHandlerContext): Promise<IntentionHandlerResult> {
     const { detection, context: conversationContext, company, dto } = context;
 
@@ -73,7 +83,7 @@ export class CancelHandler implements IIntentionHandler {
       });
 
       return {
-        reply: `✅ Reserva cancelada exitosamente.\n\n📅 Fecha: ${date}\n🕐 Hora: ${reservation.time}\n👥 Personas: ${reservation.guests}\n\nSi necesitas hacer una nueva reserva, estaré aquí para ayudarte. 😊`,
+        reply: `✅ Reserva cancelada exitosamente.\n\n📅 Fecha: ${date}\n🕐 Hora: ${this.formatTime12h(reservation.time)}\n👥 Personas: ${reservation.guests}\n\nSi necesitas hacer una nueva reserva, estaré aquí para ayudarte. 😊`,
         newState: {
           ...conversationContext,
           stage: 'idle' as const,

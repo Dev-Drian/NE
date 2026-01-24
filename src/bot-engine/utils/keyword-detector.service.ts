@@ -8,7 +8,7 @@ import { TextUtilsService } from './text-utils.service';
 const KEYWORD_CATEGORIES = {
   greeting: ['hola', 'buenos días', 'buenas tardes', 'buenas noches', 'hey', 'hi', 'buen día'],
   farewell: ['gracias', 'listo gracias', 'perfecto gracias', 'ok gracias', 'vale gracias', 'adiós', 'adios', 'chao', 'hasta luego', 'nos vemos', 'bye'],
-  products: ['menu', 'productos', 'que tienen', 'opciones', 'carta', 'que hay', 'que venden', 'que ofrecen', 'servicios', 'tratamientos', 'que servicios', 'cuales servicios'],
+  products: ['menu', 'menú', 'productos', 'que tienen', 'opciones', 'carta', 'que hay', 'que venden', 'que ofrecen', 'servicios', 'tratamientos', 'que servicios', 'cuales servicios', 'cuales productos', 'cuales son los productos', 'cuales son', 'que productos tienen', 'mostrar productos', 'ver menu', 'ver productos', 'lista de productos'],
   paraLlevar: ['para llevar', 'pedir para llevar', 'llevar', 'take away', 'recoger', 'pasar a recoger'],
   consulta: [
     'horario', 'horarios', 'abren', 'cierran', 'atencion', 'que dias', 

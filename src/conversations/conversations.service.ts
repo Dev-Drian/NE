@@ -74,10 +74,33 @@ export class ConversationsService implements OnModuleInit, OnModuleDestroy {
    * Esto es necesario para poder asociar pagos a la conversación
    */
   async findOrCreateConversation(userId: string, companyId: string): Promise<string> {
-    // Buscar conversación existente
+    // Primero, asegurar que tenemos un usuario válido
+    let user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      // Intentar buscar por teléfono (el userId a veces es el número de teléfono)
+      user = await this.prisma.user.findUnique({
+        where: { phone: userId },
+      });
+
+      if (!user) {
+        // Crear usuario si no existe
+        user = await this.prisma.user.create({
+          data: {
+            id: `user-${userId}`,
+            phone: userId,
+            name: null,
+          },
+        });
+      }
+    }
+
+    // Buscar conversación existente con el userId correcto
     const existing = await this.prisma.conversation.findFirst({
       where: {
-        userId,
+        userId: user.id,
         companyId,
       },
       orderBy: {
@@ -92,7 +115,7 @@ export class ConversationsService implements OnModuleInit, OnModuleDestroy {
     // Crear nueva conversación
     const newConversation = await this.prisma.conversation.create({
       data: {
-        userId,
+        userId: user.id,
         companyId,
         state: 'completed', // Ya completada si llegamos aquí
         context: {},

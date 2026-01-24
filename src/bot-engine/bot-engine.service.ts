@@ -118,7 +118,155 @@ export class BotEngineService {
       const asksParaLlevar = this.keywordDetector.asksParaLlevar(dto.message);
       const hasConsultaKeywords = this.keywordDetector.hasConsultaKeywords(dto.message) && !asksForProducts;
       const asksForPrice = this.keywordDetector.asksForPrice(dto.message);
+      const asksForHistory = this.keywordDetector.asksForHistory(dto.message);
     
+    // ============================================
+    // CONSULTA DE HISTORIAL - COMPLETAMENTE DINÁMICO
+    // ============================================
+    if (asksForHistory) {
+      try {
+        // Consultar todas las reservas/pedidos del usuario en la BD
+        const userReservations = await this.reservations.findByUserAndCompany(userId, dto.companyId);
+        
+        const config = company.config as any;
+        const catalogProducts = config?.products || [];
+        const configServices = config?.services || {};
+        
+        // Obtener todos los servicios disponibles de la empresa
+        const availableServiceKeys = Object.keys(configServices);
+        
+        // Función para obtener el nombre del servicio
+        const getServiceName = (serviceKey: string): string => {
+          return configServices[serviceKey]?.name || serviceKey;
+        };
+        
+        // Función para obtener emoji según tipo de servicio
+        const getServiceEmoji = (serviceKey: string): string => {
+          const key = serviceKey?.toLowerCase() || '';
+          if (key.includes('domicilio') || key.includes('delivery')) return '🚚';
+          if (key.includes('mesa') || key.includes('restaurante')) return '🍽️';
+          if (key.includes('cita') || key.includes('consulta')) return '🏥';
+          if (key.includes('spa') || key.includes('belleza')) return '💆';
+          return '📋';
+        };
+        
+        // Función para obtener el nombre del producto/tratamiento por ID
+        const getProductName = (productId: string): string => {
+          const product = catalogProducts.find((p: any) => p.id === productId);
+          return product?.name || productId;
+        };
+        
+        if (userReservations.length === 0) {
+          // Construir mensaje de "sin historial" basado en servicios disponibles
+          const serviceNames = availableServiceKeys.map(k => getServiceName(k).toLowerCase()).join(' o ');
+          const reply = `📋 No tienes registros todavía.\n\n¿Te gustaría agendar ${serviceNames ? 'un(a) ' + serviceNames : 'algo'}? 😊`;
+          await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
+          return {
+            reply,
+            intention: 'consultar',
+            confidence: 1.0,
+            conversationState: 'idle',
+          };
+        }
+        
+        // Agrupar reservas por tipo de servicio
+        const reservationsByService: Record<string, any[]> = {};
+        for (const r of userReservations) {
+          const serviceKey = r.service || 'otro';
+          if (!reservationsByService[serviceKey]) {
+            reservationsByService[serviceKey] = [];
+          }
+          reservationsByService[serviceKey].push(r);
+        }
+        
+        // Función para formatear una reserva/cita genérica
+        const formatReservation = (r: any, index: number, serviceKey: string): string => {
+          const emoji = getServiceEmoji(serviceKey);
+          const serviceName = getServiceName(serviceKey);
+          let text = `**${index}.** ${emoji} ${serviceName}`;
+          text += `\n   📅 ${DateHelper.formatDateReadable(r.date)} a las ${DateHelper.formatTimeReadable(r.time)}`;
+          
+          // Mostrar productos/tratamientos si existen
+          if (r.metadata && typeof r.metadata === 'object') {
+            const metadata = r.metadata as any;
+            
+            // Productos (para domicilios, citas con productos, etc.)
+            if (metadata.products && Array.isArray(metadata.products) && metadata.products.length > 0) {
+              const productNames = metadata.products.map((item: any) => {
+                const name = getProductName(item.id);
+                return item.quantity > 1 ? `${item.quantity}x ${name}` : name;
+              }).join(', ');
+              
+              // Usar emoji diferente según tipo de servicio
+              const productEmoji = serviceKey === 'domicilio' ? '🛒' : '💊';
+              text += `\n   ${productEmoji} ${productNames}`;
+            }
+            
+            // Tratamiento específico (si se guardó como string)
+            if (metadata.treatment && typeof metadata.treatment === 'string') {
+              text += `\n   💊 ${metadata.treatment}`;
+            }
+            
+            // Dirección (para domicilios)
+            if (metadata.address) {
+              text += `\n   📍 ${metadata.address}`;
+            }
+          }
+          
+          // Comensales (solo para mesas)
+          if (r.guests && r.guests > 1 && serviceKey === 'mesa') {
+            text += `\n   👥 ${r.guests} personas`;
+          }
+          
+          // Estado
+          const statusEmoji = r.status === 'pending' ? '⏳' : r.status === 'confirmed' ? '✅' : '❌';
+          const statusText = r.status === 'pending' ? 'Pendiente' : r.status === 'confirmed' ? 'Confirmada' : 'Cancelada';
+          text += `\n   ${statusEmoji} ${statusText}`;
+          
+          return text;
+        };
+        
+        let reply = `📋 **Tu historial:**\n\n`;
+        let itemIndex = 1;
+        let totalItems = 0;
+        
+        // Mostrar cada tipo de servicio
+        for (const [serviceKey, reservations] of Object.entries(reservationsByService)) {
+          const emoji = getServiceEmoji(serviceKey);
+          const serviceName = getServiceName(serviceKey).toUpperCase();
+          const count = reservations.length;
+          totalItems += count;
+          
+          reply += `${emoji} **${serviceName}:** (${count})\n\n`;
+          
+          reservations.slice(0, 5).forEach((r: any) => {
+            reply += formatReservation(r, itemIndex++, serviceKey) + '\n\n';
+          });
+          
+          if (count > 5) {
+            reply += `   _...y ${count - 5} más_\n\n`;
+          }
+        }
+        
+        // Resumen total
+        const servicesSummary = Object.entries(reservationsByService)
+          .map(([key, arr]) => `${arr.length} ${getServiceName(key).toLowerCase()}(s)`)
+          .join(' | ');
+        reply += `📊 **Total:** ${servicesSummary}\n`;
+        reply += `\n¿Necesitas algo más? 😊`;
+        
+        await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
+        return {
+          reply,
+          intention: 'consultar',
+          confidence: 1.0,
+          conversationState: context.stage,
+        };
+      } catch (error) {
+        this.logger.error('Error consultando historial:', error);
+      }
+    }
+
     // Si el usuario se despide o agradece (sin hacer otra pregunta), responder amablemente
     // CRÍTICO: Hacer esto ANTES de continuar con flujos de reserva
     if (isFarewell && !hasConsultaKeywords && !asksForProducts && !asksAboutDelivery && !asksForPrice) {
@@ -571,7 +719,7 @@ export class BotEngineService {
                 reply += `   📅 Fecha: ${DateHelper.formatDateReadable(r.date.toISOString().split('T')[0])}\n`;
               }
               
-              reply += `   🕐 Hora: ${r.time}\n`;
+              reply += `   🕐 Hora: ${this.formatTime12h(r.time)}\n`;
               
               if (r.service) {
                 const serviceName = r.service === 'domicilio' ? 'Domicilio' : r.service === 'mesa' ? 'Mesa' : r.service === 'cita' ? 'Cita' : r.service;
@@ -911,6 +1059,16 @@ export class BotEngineService {
     }
 
     return formattedSlots.join('. ');
+  }
+
+  /**
+   * Convierte hora de formato 24h a 12h
+   */
+  private formatTime12h(timeStr: string): string {
+    const [hours, minutes] = timeStr.split(':').map(Number);
+    const period = hours >= 12 ? 'PM' : 'AM';
+    const hour12 = hours % 12 || 12;
+    return `${hour12}:${String(minutes).padStart(2, '0')} ${period}`;
   }
 }
 

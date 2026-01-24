@@ -72,8 +72,12 @@ export class Layer3OpenAIService {
       };
     }
 
-    // Usar cache para contexto
+    // IMPORTANTE: Invalidar cache ANTES de cargar para obtener datos frescos
+    // El contexto puede haber sido actualizado por bot-engine.service.ts en el mensaje anterior
     const contextKey = `${userId}:${companyId}`;
+    await this.contextCache.invalidateContext(contextKey);
+    
+    // Cargar contexto fresco desde Redis
     const fullContext = await this.contextCache.getOrLoadContext(
       contextKey,
       () => this.conversationsService.getContext(userId, companyId)
@@ -195,6 +199,7 @@ ${reservationsText.join('\n')}
         // Si hay fallback definido pero el circuit breaker está abierto, 
         // el execute lanzará error, así que lo manejamos
         content = await this.circuitBreaker.execute(aiCall);
+        
       } catch (error) {
         // Si el circuit breaker bloqueó la operación o falló, usar Layer2
         this.logger.warn(`AI provider call failed, using Layer2 fallback: ${error.message}`);
@@ -212,12 +217,6 @@ ${reservationsText.join('\n')}
         .trim();
 
       const parsed = JSON.parse(cleanContent);
-      
-      // DEBUG: Log de la respuesta de OpenAI para servicios
-      if (hasMultipleServices) {
-        console.log(`🔍 [DEBUG] Servicio extraído por OpenAI:`, parsed.extractedData?.service || 'NO EXTRAÍDO');
-        console.log(`🔍 [DEBUG] MissingFields de OpenAI:`, parsed.missingFields || []);
-      }
       
       // VALIDAR Y NORMALIZAR DATOS EXTRAÍDOS
       if (parsed.extractedData) {
@@ -309,6 +308,45 @@ ${reservationsText.join('\n')}
             parsed.missingFields.push('service');
           }
         }
+        
+        // VALIDACIÓN 6: Productos - validar que los IDs existan y normalizar nombres
+        if (parsed.extractedData.products) {
+          const availableProducts = config?.products || [];
+          const extractedProducts = Array.isArray(parsed.extractedData.products) ? parsed.extractedData.products : [];
+          const validatedProducts: any[] = [];
+          
+          for (const item of extractedProducts) {
+            if (typeof item === 'object' && item.id) {
+              // Buscar producto por ID o por nombre
+              const product = availableProducts.find((p: any) => 
+                p.id === item.id || 
+                p.name.toLowerCase().includes(item.id.toLowerCase()) ||
+                item.id.toLowerCase().includes(p.name.toLowerCase())
+              );
+              
+              if (product) {
+                validatedProducts.push({
+                  id: product.id,
+                  quantity: item.quantity || 1
+                });
+              } else {
+              }
+            }
+          }
+          
+          if (validatedProducts.length > 0) {
+            parsed.extractedData.products = validatedProducts;
+            console.log(`✅ Total productos validados: ${validatedProducts.length}`);
+          } else {
+            // No se validó ningún producto, marcar como faltante
+            delete parsed.extractedData.products;
+            if (!parsed.missingFields) parsed.missingFields = [];
+            if (!parsed.missingFields.includes('products')) {
+              parsed.missingFields.push('products');
+            }
+            console.warn(`⚠️ Ningún producto fue validado. Se marca como faltante.`);
+          }
+        }
       }
       
       // Normalizar campos missingFields al español
@@ -319,6 +357,8 @@ ${reservationsText.join('\n')}
         phone: 'teléfono',
         name: 'nombre',
         service: 'servicio',
+        products: 'productos',
+        address: 'dirección',
       };
 
       const missingFields = parsed.missingFields || [];
