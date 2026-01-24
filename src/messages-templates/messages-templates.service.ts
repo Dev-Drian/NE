@@ -207,8 +207,18 @@ export class MessagesTemplatesService {
       phone?: string;
       service?: string;
       serviceName?: string;
+      productName?: string; // Nombre del tratamiento/producto específico (para citas médicas)
     },
   ): Promise<string> {
+    // LOG PARA DEPURACIÓN
+    console.log('\n========== getReservationConfirm ==========');
+    console.log('📝 Datos recibidos:', JSON.stringify(data, null, 2));
+    console.log('🏢 companyType:', companyType);
+    console.log('🛠️ service:', data.service);
+    console.log('🏷️ serviceName:', data.serviceName);
+    console.log('💊 productName:', data.productName);
+    console.log('============================================\n');
+    
     const config = await this.getConfigByCompanyType(companyType);
     const settings = config?.reservationSettings || this.getDefaultReservationSettings();
     const terminology = config?.terminology || this.getDefaultTerminology();
@@ -220,24 +230,50 @@ export class MessagesTemplatesService {
     const dateReadable = DateHelper.formatDateReadable(data.date);
     const timeReadable = DateHelper.formatTimeReadable(data.time);
     
-    // Determinar si es domicilio para usar "pedido" en lugar de "reserva"
-    const isDomicilio = data.service === 'domicilio';
-    const reservationType = isDomicilio ? 'Pedido' : terminology.reservation.charAt(0).toUpperCase() + terminology.reservation.slice(1);
-    const reservationTypeConfirmed = isDomicilio ? 'confirmado' : 'confirmada';
+    // Determinar tipo de confirmación según el servicio
+    // - domicilio → "Pedido confirmado"
+    // - cita → "Cita confirmada"
+    // - mesa/reserva → "Reserva confirmada"
+    let confirmationType: string;
+    let confirmationGender: string;
+    
+    if (data.service === 'domicilio') {
+      confirmationType = 'Pedido';
+      confirmationGender = 'confirmado';
+    } else if (data.service === 'cita') {
+      confirmationType = 'Cita';
+      confirmationGender = 'confirmada';
+    } else {
+      confirmationType = 'Reserva';
+      confirmationGender = 'confirmada';
+    }
+    
+    // LOG PARA DEPURACIÓN
+    console.log('🎯 Tipo de confirmación elegido:', confirmationType, confirmationGender);
+    console.log('🔍 Comparación service === "cita":', data.service === 'cita');
     
     // Construir mensaje con servicio si está disponible
-    let confirmMessage = `✅ ¡${reservationType} ${reservationTypeConfirmed}!
+    let confirmMessage = `✅ ¡${confirmationType} ${confirmationGender}!
 
 📅 Fecha: ${dateReadable}
 🕐 Hora: ${timeReadable}`;
 
-    // Agregar servicio si está presente
-    if (data.serviceName) {
+    // Agregar servicio/tratamiento si está presente
+    // Para citas médicas, mostrar el tratamiento específico (productName tiene prioridad)
+    if (data.productName && data.service === 'cita') {
+      confirmMessage += `\n🏥 Servicio: ${data.productName}`;
+    } else if (data.serviceName && data.service === 'cita') {
+      confirmMessage += `\n🏥 Servicio: ${data.serviceName}`;
+    } else if (data.serviceName && data.service !== 'domicilio') {
       confirmMessage += `\n🔧 Servicio: ${data.serviceName}`;
     }
     
-    confirmMessage += `\n👥 ${guests} ${peopleText}
-📱 Contacto: ${data.phone || 'proporcionado'}
+    // Solo mostrar personas para reservas de mesa
+    if (data.service === 'mesa' || (!data.service && guests > 0)) {
+      confirmMessage += `\n👥 ${guests} ${peopleText}`;
+    }
+    
+    confirmMessage += `\n📱 Contacto: ${data.phone || 'proporcionado'}
 
 ¡Te esperamos! Si necesitas cancelar o modificar, escríbenos.`;
 

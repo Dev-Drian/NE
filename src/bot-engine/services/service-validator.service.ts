@@ -66,44 +66,18 @@ export class ServiceValidatorService {
 
   /**
    * Obtiene campos requeridos según configuración del servicio
-   * Los campos pueden venir de:
-   * 1. requiredFields explícito en la configuración del servicio
-   * 2. Flags booleanos (requiresProducts, requiresGuests, etc.)
-   * 3. Campos base siempre requeridos (date, time, phone)
+   * 100% dinámico - lee directamente del array requiredFields en la config
+   * Cada servicio DEBE definir su propio requiredFields en seed.ts
    */
   getRequiredFields(serviceConfig: ServiceConfig): string[] {
-    // Si el servicio define campos requeridos explícitos, usarlos
+    // Los campos requeridos DEBEN estar definidos en la config de cada servicio
     if (serviceConfig.requiredFields && Array.isArray(serviceConfig.requiredFields)) {
       return [...serviceConfig.requiredFields];
     }
 
-    // Si no, construir desde flags booleanos
-    const required: string[] = [];
-    
-    // Para servicios con productos (domicilio, delivery), pedir productos PRIMERO
-    if (serviceConfig.requiresProducts) {
-      required.push('products');
-    }
-    
-    // Luego los campos base
-    required.push('date', 'time');
-    
-    // Dirección antes del teléfono para domicilios
-    if (serviceConfig.requiresAddress || serviceConfig.requiresLocation) {
-      required.push('address');
-    }
-    
-    required.push('phone');
-    
-    // Campos adicionales
-    if (serviceConfig.requiresGuests) {
-      required.push('guests');
-    }
-    if (serviceConfig.requiresTable) {
-      required.push('tableId');
-    }
-
-    return required;
+    // Fallback mínimo si no hay config (no debería pasar si seed.ts está bien)
+    console.warn('⚠️ Servicio sin requiredFields definidos en config, usando fallback básico');
+    return ['date', 'time', 'phone'];
   }
 
   /**

@@ -12,7 +12,7 @@ export interface ResolvedService {
   validatorConfig: ServiceConfig;
   missingFieldLabels: Record<string, string>;
   // Para usar en copy/UX
-  reservationNoun: 'reserva' | 'pedido';
+  reservationNoun: 'reserva' | 'pedido' | 'cita';
 }
 
 @Injectable()
@@ -51,7 +51,16 @@ export class ServiceConfigResolverService {
     const requiresTable = rawServiceConfig?.requiresTable === true;
     const requiresAddress = rawServiceConfig?.requiresAddress === true || rawServiceConfig?.requiresLocation === true;
 
-    const reservationNoun: 'reserva' | 'pedido' = serviceKey === 'domicilio' ? 'pedido' : 'reserva';
+    // Determinar el sustantivo correcto según el servicio
+    // - domicilio → "pedido"
+    // - cita → "cita"
+    // - mesa/otros → "reserva"
+    let reservationNoun: 'reserva' | 'pedido' | 'cita' = 'reserva';
+    if (serviceKey === 'domicilio') {
+      reservationNoun = 'pedido';
+    } else if (serviceKey === 'cita') {
+      reservationNoun = 'cita';
+    }
 
     const missingFieldLabels: Record<string, string> = {
       date: 'fecha',

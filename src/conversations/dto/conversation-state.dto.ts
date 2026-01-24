@@ -26,6 +26,16 @@ export interface ConversationState {
   }>;
   lastIntention?: string;
   
+  // Metadata para almacenar información adicional del flujo
+  metadata?: {
+    reservationId?: string;
+    lastProductsAttempt?: Array<{ id: string; quantity: number }>;
+    unavailableProducts?: Array<{ id: string; name: string; reason: string }>;
+    hasAskedAllFields?: boolean;
+    lastFieldAsked?: string;
+    [key: string]: any;
+  };
+  
   // Nuevo: Estado de State Machine (fuente única de verdad)
   stateMachine?: ConversationStateMachine;
 }

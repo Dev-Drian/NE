@@ -300,4 +300,41 @@ export class ResourceValidatorService {
       });
     }
   }
+
+  /**
+   * Restaura stock de productos cuando un pago es rechazado o cancelado
+   * Devuelve las cantidades que fueron reservadas previamente
+   */
+  async restoreProductStock(
+    companyId: string,
+    products: Array<{ id: string; quantity: number }>
+  ): Promise<void> {
+    const company = await this.companiesService.findOne(companyId);
+    if (!company) return;
+
+    const config = company.config as any;
+    const catalogProducts = config?.products || [];
+    
+    let updated = false;
+    const updatedProducts = catalogProducts.map((product: any) => {
+      const requestedItem = products.find(p => p.id === product.id);
+      if (requestedItem && product.stock !== undefined && product.stock !== null) {
+        updated = true;
+        return {
+          ...product,
+          stock: product.stock + requestedItem.quantity, // Sumar de vuelta
+        };
+      }
+      return product;
+    });
+
+    if (updated) {
+      await this.companiesService.update(companyId, {
+        config: {
+          ...config,
+          products: updatedProducts,
+        },
+      });
+    }
+  }
 }

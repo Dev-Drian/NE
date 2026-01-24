@@ -7,7 +7,7 @@ export interface ServiceResolution {
   hasMultipleServices: boolean;
   availableServices: Record<string, any>;
   rawServiceConfig?: any;
-  reservationNoun: 'reserva' | 'pedido';
+  reservationNoun: 'reserva' | 'pedido' | 'cita';
 }
 
 export interface ReservationServiceStrategy {

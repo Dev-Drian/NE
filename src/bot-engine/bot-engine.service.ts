@@ -14,6 +14,7 @@ import { TextUtilsService } from './utils/text-utils.service';
 import { ContextCacheService } from './utils/context-cache.service';
 import { KeywordDetectorService } from './utils/keyword-detector.service';
 import { ReservationFlowService } from './handlers/reservation/reservation-flow.service';
+import { ResourceValidatorService } from './services/resource-validator.service';
 import { ProcessMessageDto } from './dto/process-message.dto';
 import { DetectionResult } from './dto/detection-result.dto';
 import { CONFIDENCE_THRESHOLDS } from './constants/detection.constants';
@@ -52,6 +53,7 @@ export class BotEngineService {
     private contextCache: ContextCacheService,
     private keywordDetector: KeywordDetectorService,
     private reservationFlow: ReservationFlowService,
+    private resourceValidator: ResourceValidatorService,
     private greetingHandler: GreetingHandler,
     private cancelHandler: CancelHandler,
     private queryHandler: QueryHandler,
@@ -818,9 +820,22 @@ export class BotEngineService {
           // Responder según el estado del pago
           if (updatedPayment.status === 'APPROVED') {
             // Pago aprobado - confirmar pedido
+            // NOTA: El stock ya fue descontado cuando se creó el pedido con status 'pending'
             const service = context.collectedData?.service;
             const isDelivery = service === 'domicilio';
             const confirmationType = isDelivery ? 'pedido' : 'reserva';
+            
+            // Actualizar reserva a "confirmed" si existe
+            if (context.metadata?.reservationId) {
+              try {
+                await this.reservations.update(context.metadata.reservationId, {
+                  status: 'confirmed',
+                });
+                this.logger.log(`Reserva ${context.metadata.reservationId} actualizada a confirmed`);
+              } catch (error) {
+                this.logger.warn('Error actualizando reserva:', error);
+              }
+            }
             
             reply = `✅ ¡Perfecto! Tu pago ha sido confirmado exitosamente.\n\n🎉 Tu ${confirmationType} ha sido ${isDelivery ? 'confirmado' : 'confirmada'}. Te mantendremos informado sobre el estado de tu ${confirmationType}.`;
             
@@ -860,12 +875,37 @@ export class BotEngineService {
               conversationState: context.stage,
             };
           } else if (updatedPayment.status === 'DECLINED' || updatedPayment.status === 'ERROR') {
-            // Pago rechazado
+            // Pago rechazado - RESTAURAR STOCK
             const service = context.collectedData?.service;
             const isDelivery = service === 'domicilio';
             const orderType = isDelivery ? 'pedido' : 'reserva';
             
-            reply = `❌ Tu pago ha sido rechazado. Por favor intenta nuevamente con otro método de pago o contacta a tu banco.\n\n🔗 Intenta nuevamente: ${updatedPayment.paymentUrl}\n\nSi necesitas ayuda, escríbeme. 😊`;
+            // ===== RESTAURAR STOCK DE PRODUCTOS SI PAGO FUE RECHAZADO =====
+            if (isDelivery && context.collectedData?.products && context.collectedData.products.length > 0) {
+              try {
+                await this.resourceValidator.restoreProductStock(
+                  dto.companyId,
+                  context.collectedData.products
+                );
+                this.logger.log(`📦 Stock restaurado por pago rechazado: ${context.collectedData.products.length} producto(s)`);
+              } catch (error) {
+                this.logger.warn('Error restaurando stock de productos:', error);
+              }
+            }
+            
+            // Actualizar reserva a "cancelled" si existe
+            if (context.metadata?.reservationId) {
+              try {
+                await this.reservations.update(context.metadata.reservationId, {
+                  status: 'cancelled',
+                });
+                this.logger.log(`Reserva ${context.metadata.reservationId} cancelada por pago rechazado`);
+              } catch (error) {
+                this.logger.warn('Error cancelando reserva:', error);
+              }
+            }
+            
+            reply = `❌ Tu pago ha sido rechazado. Los productos han sido liberados del inventario.\n\nPor favor intenta nuevamente con otro método de pago o contacta a tu banco.\n\n🔗 Intenta nuevamente: ${updatedPayment.paymentUrl}\n\nSi necesitas ayuda, escríbeme. 😊`;
             
             await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
             return {

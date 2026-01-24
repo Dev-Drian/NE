@@ -132,6 +132,45 @@ export class ReservationFlowService {
       ...filteredExtracted,
     };
 
+    // ===== VALIDAR Y CORREGIR SERVICIO =====
+    // Si el servicio extraído no es válido (ej: "Consulta general" en lugar de "cita"),
+    // intentar corregirlo
+    const serviceKeys = Object.keys(availableServices);
+    
+    if (collected.service && !availableServices[collected.service]) {
+      // El servicio extraído no es válido, podría ser el nombre de un producto
+      this.logger.log(`⚠️ Servicio "${collected.service}" no es válido. Servicios disponibles: ${serviceKeys.join(', ')}`);
+      
+      // Si solo hay un servicio disponible, usarlo
+      if (serviceKeys.length === 1) {
+        this.logger.log(`🔄 Corrigiendo servicio a: ${serviceKeys[0]}`);
+        collected.service = serviceKeys[0];
+      } else {
+        // Buscar si el servicio extraído coincide con algún producto
+        const catalogProducts = config?.products || [];
+        const matchingProduct = catalogProducts.find((p: any) => 
+          p.name?.toLowerCase() === collected.service?.toLowerCase()
+        );
+        
+        if (matchingProduct) {
+          this.logger.log(`🔄 "${collected.service}" es un producto, buscando servicio que requiere productos...`);
+          // Buscar el servicio que requiere productos
+          const serviceWithProducts = serviceKeys.find(key => availableServices[key]?.requiresProducts);
+          if (serviceWithProducts) {
+            collected.service = serviceWithProducts;
+            this.logger.log(`✅ Servicio corregido a: ${collected.service}`);
+          }
+        }
+      }
+    }
+    
+    // ===== ASIGNAR SERVICIO AUTOMÁTICO SI SOLO HAY UNO =====
+    // Si la empresa solo tiene UN servicio disponible, asignarlo automáticamente
+    if (serviceKeys.length === 1 && !collected.service) {
+      collected.service = serviceKeys[0];
+      this.logger.log(`🎯 Servicio único asignado automáticamente: ${collected.service}`);
+    }
+
     // Identificar datos nuevos del mensaje actual
     const newData: any = {};
     for (const [key, value] of Object.entries(extracted)) {
@@ -360,6 +399,12 @@ export class ReservationFlowService {
     }
 
     // Validar disponibilidad
+    this.logger.log('\n========== VALIDACIÓN DE DISPONIBILIDAD ==========');
+    this.logger.log(`📅 date: ${collected.date}`);
+    this.logger.log(`🕐 time: ${collected.time}`);
+    this.logger.log(`🛠️ service: ${collected.service}`);
+    this.logger.log(`👤 userId: ${dto.userId}`);
+    
     const available = await this.availability.check(dto.companyId, {
       date: collected.date!,
       time: collected.time!,
@@ -367,6 +412,9 @@ export class ReservationFlowService {
       userId: dto.userId,
       service: collected.service,
     });
+    
+    this.logger.log(`✅ Resultado disponibilidad: ${JSON.stringify(available)}`);
+    this.logger.log('===================================================\n');
 
     if (!available.isAvailable) {
       if (available.reason === 'time_out_of_range') {
@@ -398,6 +446,33 @@ export class ReservationFlowService {
         };
       }
 
+      // Si es una cita ocupada, mostrar alternativas y pedir nueva hora
+      if (available.reason === 'appointment_taken') {
+        const occupiedTime = collected.time;
+        delete collected.time; // Limpiar la hora para que elija otra
+
+        let reply = available.message || `❌ Ya hay una cita programada para las ${occupiedTime}.`;
+        
+        if (available.alternatives?.length) {
+          reply += `\n\n🕐 Horarios disponibles para ese día:\n`;
+          available.alternatives.slice(0, 5).forEach((alt, idx) => {
+            reply += `${idx + 1}. ${alt}\n`;
+          });
+          reply += `\n¿Te sirve alguno de estos horarios?`;
+        }
+
+        return {
+          reply,
+          newState: {
+            ...context,
+            collectedData: collected,
+            stage: 'collecting',
+            lastIntention: 'reservar',
+          },
+          missingFields: [resolution.missingFieldLabels['time'] || 'hora'],
+        };
+      }
+
       let reply = available.message || 'No hay disponibilidad en este horario.';
       if (available.alternatives?.length) {
         reply += `\n\n¿Te sirve alguna de estas opciones?\n`;
@@ -415,6 +490,48 @@ export class ReservationFlowService {
           lastIntention: 'reservar',
         },
       };
+    }
+
+    // ===== VALIDACIÓN DE CITAS MÉDICAS OCUPADAS =====
+    // Para servicios de tipo "cita", SIEMPRE verificar que el horario no esté ocupado por otra cita
+    if (collected.service === 'cita') {
+      this.logger.log(`🔍 Validando disponibilidad de cita: ${collected.date} ${collected.time}`);
+      const productId = collected.products?.[0]?.id;
+      const appointmentCheck = await this.availability.checkAppointmentAvailability(
+        dto.companyId,
+        collected.date!,
+        collected.time!,
+        collected.service,
+        productId,
+      );
+
+      this.logger.log(`📋 Resultado validación cita: ${JSON.stringify(appointmentCheck)}`);
+
+      if (!appointmentCheck.isAvailable) {
+        let reply = appointmentCheck.message || 'Ese horario ya está ocupado.';
+        
+        if (appointmentCheck.alternatives && appointmentCheck.alternatives.length > 0) {
+          reply += `\n\n🕐 Horarios disponibles para ese día:\n`;
+          appointmentCheck.alternatives.forEach((slot, idx) => {
+            reply += `${idx + 1}. ${slot}\n`;
+          });
+          reply += `\n¿Te sirve alguno de estos horarios?`;
+        }
+
+        // Limpiar la hora para que pueda elegir otra
+        delete collected.time;
+
+        return {
+          reply,
+          newState: {
+            ...context,
+            collectedData: collected,
+            stage: 'collecting',
+            lastIntention: 'reservar',
+          },
+          missingFields: [resolution.missingFieldLabels['time'] || 'hora'],
+        };
+      }
     }
 
     // Validar y asignar recursos (mesas, productos, etc.)
@@ -551,7 +668,22 @@ export class ReservationFlowService {
               },
             });
             reservationId = reservation.id;
-            console.log(`✅ Reserva creada con ID: ${reservationId}, status: pending`);
+            this.logger.log(`✅ Reserva creada con ID: ${reservationId}, status: pending`);
+            
+            // ===== DESCONTAR STOCK INMEDIATAMENTE AL CREAR PEDIDO =====
+            // El stock se reserva aunque el pago esté pendiente
+            // Si el pago es rechazado, se devolverá el stock
+            if (collected.service === 'domicilio' && collected.products && collected.products.length > 0) {
+              try {
+                await this.resourceValidator.decrementProductStock(
+                  dto.companyId,
+                  collected.products
+                );
+                this.logger.log(`📦 Stock reservado para pedido pendiente: ${collected.products.length} producto(s)`);
+              } catch (error) {
+                this.logger.warn('Error reservando stock de productos:', error);
+              }
+            }
           }
           
           // Crear pago solo si no existe
@@ -629,6 +761,7 @@ export class ReservationFlowService {
     }
 
     // ===== CREAR RESERVA =====
+    this.logger.log(`📝 Creando reserva con servicio: ${collected.service}`);
     try {
       const reservation = await this.reservations.create({
         company: { connect: { id: dto.companyId } },
@@ -661,6 +794,26 @@ export class ReservationFlowService {
         }
       }
 
+      // Obtener el nombre del tratamiento/producto específico (para citas médicas)
+      let productName: string | undefined;
+      if (collected.service === 'cita' && collected.products && collected.products.length > 0) {
+        const productId = collected.products[0]?.id;
+        const catalogProducts = config?.products || [];
+        const product = catalogProducts.find((p: any) => p.id === productId);
+        if (product) {
+          productName = product.name;
+        }
+      }
+
+      // LOG PARA DEPURACIÓN - ANTES DE CONFIRMAR
+      this.logger.log('\n========== CONFIRMACIÓN DE RESERVA/CITA ==========');
+      this.logger.log(`🛠️ collected.service: "${collected.service}"`);
+      this.logger.log(`🏢 companyType: "${companyType}"`);
+      this.logger.log(`🏷️ availableServices[service]?.name: "${collected.service && availableServices[collected.service]?.name}"`);
+      this.logger.log(`💊 productName: "${productName}"`);
+      this.logger.log(`📝 collected completo: ${JSON.stringify(collected, null, 2)}`);
+      this.logger.log('===================================================\n');
+
       let reply = await this.messagesTemplates.getReservationConfirm(companyType, {
         date: collected.date!,
         time: collected.time!,
@@ -668,18 +821,19 @@ export class ReservationFlowService {
         phone: collected.phone,
         service: collected.service,
         serviceName: collected.service && availableServices[collected.service]?.name,
+        productName, // Nombre del tratamiento específico para citas
       });
-
-      // Ajuste de copy para domicilio
-      if (resolution.reservationNoun === 'pedido') {
-        reply = reply.replace(/reserva/gi, (match) =>
-          match[0] === match[0].toUpperCase() ? 'Pedido' : 'pedido',
-        );
-      }
 
       // VALIDACIÓN: NUNCA retornar respuesta vacía
       if (!reply || reply.trim().length === 0) {
-        reply = `✅ ${resolution.reservationNoun === 'pedido' ? 'Pedido' : 'Reserva'} confirmada exitosamente. ¡Te esperamos! 😊`;
+        // Usar el tipo correcto según el servicio
+        let confirmType = 'Reserva confirmada';
+        if (collected.service === 'domicilio') {
+          confirmType = 'Pedido confirmado';
+        } else if (collected.service === 'cita') {
+          confirmType = 'Cita confirmada';
+        }
+        reply = `✅ ¡${confirmType}! Te esperamos. 😊`;
       }
 
       return {
