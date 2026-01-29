@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { AvailabilityService } from '../../availability/availability.service';
 import { MessagesTemplatesService } from '../../messages-templates/messages-templates.service';
+import { ProductsService } from '../../products/products.service';
 import { KeywordDetectorService } from '../utils/keyword-detector.service';
 import { IIntentionHandler, IntentionHandlerContext, IntentionHandlerResult } from './intention-handler.interface';
 
@@ -9,6 +10,7 @@ export class QueryHandler implements IIntentionHandler {
   constructor(
     private availability: AvailabilityService,
     private messagesTemplates: MessagesTemplatesService,
+    private productsService: ProductsService,
     private keywordDetector: KeywordDetectorService,
   ) {}
 
@@ -18,6 +20,106 @@ export class QueryHandler implements IIntentionHandler {
     const config = company.config as any;
     const hoursText = this.formatHours(config?.hours);
     let reply: string;
+    
+    // PRIORIDAD 0: Si es una consulta de disponibilidad específica (queryType: 'availability')
+    // Mostrar horarios disponibles para el servicio mencionado
+    if (detection.extractedData?.queryType === 'availability') {
+      const extracted = detection.extractedData;
+      
+      // Buscar el servicio mencionado
+      let serviceName: string | null = null;
+      let serviceKey: string | null = null;
+      
+      if (extracted.service) {
+        // Si OpenAI extrajo el servicio directamente
+        serviceKey = extracted.service;
+        const serviceConfig = config?.services?.[serviceKey];
+        serviceName = serviceConfig?.name || serviceKey;
+      } else {
+        // Buscar el servicio en el mensaje usando keywords
+        const normalizedMessage = dto.message.toLowerCase();
+        for (const [key, serviceData] of Object.entries(config?.services || {})) {
+          const service = serviceData as any;
+          const keywords = service.keywords || [];
+          if (keywords.some((kw: string) => normalizedMessage.includes(kw.toLowerCase()))) {
+            serviceKey = key;
+            serviceName = service.name;
+            break;
+          }
+        }
+      }
+      
+      if (serviceKey && serviceName) {
+        // Generar slots disponibles para los próximos días
+        const today = new Date();
+        const availableSlots: { date: string; times: string[] }[] = [];
+        
+        // Buscar disponibilidad para los próximos 7 días
+        for (let i = 0; i < 7; i++) {
+          const checkDate = new Date(today);
+          checkDate.setDate(today.getDate() + i);
+          const dateStr = checkDate.toISOString().split('T')[0];
+          
+          // Generar horarios posibles (8am - 6pm, cada hora)
+          const possibleTimes = [
+            '08:00', '09:00', '10:00', '11:00', '12:00',
+            '13:00', '14:00', '15:00', '16:00', '17:00', '18:00'
+          ];
+          
+          const availableTimes: string[] = [];
+          for (const time of possibleTimes) {
+            try {
+              const check = await this.availability.check(dto.companyId, {
+                date: dateStr,
+                time: time,
+                guests: 1,
+                userId: userId,
+                service: serviceKey,
+              });
+              
+              if (check.isAvailable) {
+                availableTimes.push(time);
+              }
+            } catch (error) {
+              // Si falla, continuar con el siguiente horario
+            }
+          }
+          
+          if (availableTimes.length > 0) {
+            availableSlots.push({ date: dateStr, times: availableTimes });
+          }
+          
+          // Si ya tenemos 3 días con disponibilidad, es suficiente
+          if (availableSlots.length >= 3) {
+            break;
+          }
+        }
+        
+        if (availableSlots.length > 0) {
+          const { DateHelper } = await import('../../common/date-helper');
+          reply = `📅 **Disponibilidad para ${serviceName}:**\n\n`;
+          
+          for (const slot of availableSlots) {
+            const dateReadable = DateHelper.formatDateReadable(slot.date);
+            reply += `**${dateReadable}:**\n`;
+            reply += slot.times.join(', ') + '\n\n';
+          }
+          
+          reply += '¿Te gustaría hacer una reserva para alguno de estos horarios? 😊';
+        } else {
+          reply = `Lo siento, no encontré disponibilidad para ${serviceName} en los próximos días. ¿Te gustaría que te ayude con otra cosa? 😔`;
+        }
+        
+        return {
+          reply,
+          newState: {
+            ...conversationContext,
+            stage: 'idle' as const,
+          },
+        };
+      }
+      // Si no encontramos el servicio, continuar con el flujo normal
+    }
     
     // PRIORIDAD 1: Si OpenAI generó un suggestedReply con contexto relevante, usarlo
     // OpenAI ya analizó pagos pendientes, reservas activas, historial completo
@@ -43,24 +145,84 @@ export class QueryHandler implements IIntentionHandler {
       }
     }
     
-    // PRIORIDAD 2: Si preguntan por productos/servicios/menú, mostrar lista completa
+    // PRIORIDAD 2: Si preguntan por información/detalles de un producto específico
+    // Usar los datos extraídos por OpenAI en lugar de solo keywords
+    const allProducts = await this.productsService.findByCompany(company.id);
+    
+    // 1. Primero revisar si OpenAI extrajo un producto en sus datos
+    const extractedProducts = detection.extractedData?.products || [];
+    if (extractedProducts.length > 0) {
+      const productId = extractedProducts[0]?.id || extractedProducts[0];
+      const mentionedProduct = allProducts.find(p => p.id === productId || p.name === productId);
+      
+      if (mentionedProduct && mentionedProduct.description) {
+        // Si el usuario está haciendo una pregunta (no una orden), mostrar detalles
+        const isQuestion = dto.message.includes('?') || 
+                          detection.extractedData?.queryType === 'availability' ||
+                          this.keywordDetector.asksForDetails(dto.message) ||
+                          this.keywordDetector.asksForPrice(dto.message);
+        
+        if (isQuestion) {
+          reply = mentionedProduct.description;
+          
+          return {
+            reply,
+            newState: {
+              ...conversationContext,
+              stage: conversationContext.stage !== 'collecting' ? ('idle' as const) : conversationContext.stage,
+            },
+          };
+        }
+      }
+    }
+    
+    // 2. Fallback: Buscar por keywords si OpenAI no extrajo nada
+    if (this.keywordDetector.asksForDetails(dto.message)) {
+      const normalized = dto.message.toLowerCase();
+      
+      const mentionedProduct = allProducts.find(product => {
+        const productName = product.name.toLowerCase();
+        const keywords = product.keywords || [];
+        
+        if (normalized.includes(productName)) return true;
+        return keywords.some(keyword => normalized.includes(keyword.toLowerCase()));
+      });
+      
+      if (mentionedProduct && mentionedProduct.description) {
+        reply = mentionedProduct.description;
+        
+        return {
+          reply,
+          newState: {
+            ...conversationContext,
+            stage: conversationContext.stage !== 'collecting' ? ('idle' as const) : conversationContext.stage,
+          },
+        };
+      }
+    }
+    
+    // PRIORIDAD 3: Si preguntan por productos/servicios/menú, mostrar lista completa
     const askingAboutProducts = this.keywordDetector.asksForProducts(dto.message);
     
     if (askingAboutProducts) {
       reply = '';
       
-      // Mostrar servicios disponibles
-      if (config?.services && Object.keys(config.services).length > 0) {
-        const servicesList = Object.entries(config.services)
-          .map(([key, value]: [string, any]) => `• ${value.name}`)
+      // Mostrar servicios disponibles desde BD (tabla Product con category 'service')
+      const services = await this.productsService.findByCompany(company.id);
+      const serviceProducts = services.filter(s => s.category === 'service');
+      const regularProducts = services.filter(s => s.category !== 'service');
+      
+      if (serviceProducts.length > 0) {
+        const servicesList = serviceProducts
+          .map(s => `• ${s.name}`)
           .join('\n');
         reply = `Ofrecemos los siguientes servicios:\n\n${servicesList}`;
       }
       
       // Mostrar productos disponibles si existen
-      if (config?.products && Array.isArray(config.products) && config.products.length > 0) {
-        const productsList = config.products
-          .map((p: any) => {
+      if (regularProducts.length > 0) {
+        const productsList = regularProducts
+          .map((p) => {
             const price = new Intl.NumberFormat('es-CO', { 
               style: 'currency', 
               currency: 'COP', 

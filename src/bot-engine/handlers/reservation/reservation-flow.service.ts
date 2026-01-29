@@ -4,6 +4,7 @@ import { ProcessMessageDto } from '../../dto/process-message.dto';
 import { MessagesTemplatesService } from '../../../messages-templates/messages-templates.service';
 import { ContextCacheService } from '../../utils/context-cache.service';
 import { CompaniesService } from '../../../companies/companies.service';
+import { ProductsService } from '../../../products/products.service';
 import { KeywordDetectorService } from '../../utils/keyword-detector.service';
 import { TextUtilsService } from '../../utils/text-utils.service';
 import { ServiceValidatorService } from '../../services/service-validator.service';
@@ -24,6 +25,7 @@ export class ReservationFlowService {
     private messagesTemplates: MessagesTemplatesService,
     private contextCache: ContextCacheService,
     private companies: CompaniesService,
+    private productsService: ProductsService,
     private keywordDetector: KeywordDetectorService,
     private textUtils: TextUtilsService,
     private serviceValidator: ServiceValidatorService,
@@ -146,9 +148,9 @@ export class ReservationFlowService {
         this.logger.log(`🔄 Corrigiendo servicio a: ${serviceKeys[0]}`);
         collected.service = serviceKeys[0];
       } else {
-        // Buscar si el servicio extraído coincide con algún producto
-        const catalogProducts = config?.products || [];
-        const matchingProduct = catalogProducts.find((p: any) => 
+        // Buscar si el servicio extraído coincide con algún producto desde BD
+        const catalogProducts = await this.productsService.findByCompany(company.id);
+        const matchingProduct = catalogProducts.find((p) => 
           p.name?.toLowerCase() === collected.service?.toLowerCase()
         );
         
@@ -209,7 +211,7 @@ export class ReservationFlowService {
     // Mapear productos/tratamientos a IDs del catálogo con cantidades
     // SOLO si OpenAI NO extrajo productos (evitar doble merge)
     const openAIExtractedProducts = extracted.products && Array.isArray(extracted.products) && extracted.products.length > 0;
-    const catalogProducts = Array.isArray(config?.products) ? config.products : [];
+    const catalogProducts = await this.productsService.findByCompany(company.id);
     
     if (catalogProducts.length > 0 && !openAIExtractedProducts) {
       const normalizedMsg = this.textUtils.normalizeText(dto.message.toLowerCase());
@@ -998,7 +1000,7 @@ export class ReservationFlowService {
     });
 
     parts.push(`Para confirmar tu ${reservationType}, necesito:\n${questions.join('\n')}`);
-    parts.push(`\n💡 Puedes darme todos los datos de una vez o uno por uno. La IA entenderá qué es cada cosa 😊`);
+    parts.push(`\n💡 Puedes darme todos los datos de una vez o uno por uno.`);
 
     return parts.join('\n\n');
   }

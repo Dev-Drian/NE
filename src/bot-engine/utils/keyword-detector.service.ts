@@ -77,10 +77,78 @@ export class KeywordDetectorService {
   }
 
   /**
+   * Detecta si el usuario está preguntando por disponibilidad de un servicio
+   * Ej: "cuando hay disponibilidad para limpieza dental", "que días tienen para consulta"
+   */
+  asksForAvailability(message: string): boolean {
+    const normalized = this.textUtils.normalizeText(message);
+    
+    // Palabras que indican pregunta sobre disponibilidad
+    const availabilityKeywords = [
+      'cuando hay disponibilidad',
+      'para cuando hay',
+      'que dias hay',
+      'que horarios hay',
+      'cuando tienen disponible',
+      'cuando atienden',
+      'que dias atienden',
+      'horarios disponibles',
+      'cuando puedo',
+      'para cuando',
+      'disponibilidad para',
+      'hay disponibilidad',
+      'tienen disponibilidad'
+    ];
+    
+    return availabilityKeywords.some(keyword => normalized.includes(keyword));
+  }
+
+  /**
    * Detecta si el mensaje pregunta por precios
    */
   asksForPrice(message: string): boolean {
     return this.textUtils.containsAnyKeyword(message, KEYWORD_CATEGORIES.price);
+  }
+
+  /**
+   * Detecta si el mensaje pide más información/detalles sobre algo
+   * Ej: "información sobre la limpieza dental", "cuéntame más de", "detalles del", "si sobre limpieza"
+   */
+  asksForDetails(message: string): boolean {
+    const normalized = this.textUtils.normalizeText(message);
+    const detailKeywords = [
+      'informacion sobre',
+      'informacion de',
+      'información sobre',
+      'información de',
+      'detalles de',
+      'detalles del',
+      'detalles sobre',
+      'cuentame mas',
+      'cuéntame más',
+      'que es',
+      'en que consiste',
+      'como es',
+      'mas sobre',
+      'más sobre',
+      'explica',
+      'que incluye',
+      // Patrones de continuación (respuestas a preguntas del bot)
+      'si sobre',
+      'sobre el',
+      'sobre la',
+      'sobre los',
+      'sobre las',
+      'acerca de',
+      'acerca del',
+      'de que trata',
+      'contame de',
+      'cuéntame de',
+      'hablame de',
+      'háblame de'
+    ];
+    
+    return detailKeywords.some(keyword => normalized.includes(keyword));
   }
 
   /**

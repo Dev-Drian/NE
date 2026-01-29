@@ -10,6 +10,7 @@ import { CompaniesService } from '../companies/companies.service';
 import { UsersService } from '../users/users.service';
 import { PaymentsService } from '../payments/payments.service';
 import { KeywordsService } from '../keywords/keywords.service';
+import { ProductsService } from '../products/products.service';
 import { TextUtilsService } from './utils/text-utils.service';
 import { ContextCacheService } from './utils/context-cache.service';
 import { KeywordDetectorService } from './utils/keyword-detector.service';
@@ -49,6 +50,7 @@ export class BotEngineService {
     private usersService: UsersService,
     private paymentsService: PaymentsService,
     private keywordsService: KeywordsService,
+    private productsService: ProductsService,
     private textUtils: TextUtilsService,
     private contextCache: ContextCacheService,
     private keywordDetector: KeywordDetectorService,
@@ -199,6 +201,7 @@ export class BotEngineService {
       const asksForPrice = this.keywordDetector.asksForPrice(dto.message);
       const asksForHistory = this.keywordDetector.asksForHistory(dto.message);
       const isConfirmation = this.keywordDetector.isConfirmation(dto.message);
+      const asksForAvailability = this.keywordDetector.asksForAvailability(dto.message);
     
     // ============================================
     // CONSULTA DE HISTORIAL - COMPLETAMENTE DINÁMICO
@@ -562,6 +565,19 @@ export class BotEngineService {
         intention: 'consultar',
         confidence: 0.9,
       };
+    } else if (asksForAvailability) {
+      // Si pregunta específicamente por disponibilidad (ej: "cuando hay disponibilidad para limpieza dental")
+      // esto es una CONSULTA, no una reserva directa
+      // Usar OpenAI para extraer el servicio que está mencionando
+      const layer3Detection = await this.layer3.detect(dto.message, dto.companyId, userId);
+      detection = {
+        intention: 'consultar',
+        confidence: 0.95,
+        extractedData: {
+          ...layer3Detection.extractedData,
+          queryType: 'availability', // Marcar que es una consulta de disponibilidad
+        },
+      };
     } else if (isContinuingReservation) {
       // Si estamos continuando una reserva, SIEMPRE usar OpenAI para extraer datos
       // OpenAI entiende mejor el contexto y puede extraer información incluso sin keywords
@@ -822,22 +838,21 @@ export class BotEngineService {
               if (r.metadata && typeof r.metadata === 'object') {
                 const metadata = r.metadata as any;
                 if (metadata.products && Array.isArray(metadata.products) && metadata.products.length > 0) {
-                  // Obtener config de empresa para nombres de productos
-                  const companyConfig = company?.config as any;
-                  const catalogProducts = Array.isArray(companyConfig?.products) ? companyConfig.products : [];
+                  // Obtener productos desde BD
+                  const dbProducts = await this.productsService.findByCompany(company.id);
                   
                   const productLines: string[] = [];
                   for (const item of metadata.products) {
                     if (typeof item === 'object' && item.id) {
                       // Formato nuevo con cantidades
-                      const product = catalogProducts.find((p: any) => p.id === item.id);
+                      const product = dbProducts.find((p) => p.id === item.id);
                       if (product) {
                         const quantity = item.quantity || 1;
                         productLines.push(`${quantity}x ${product.name}`);
                       }
                     } else {
-                      // Formato antiguo (solo IDs)
-                      const product = catalogProducts.find((p: any) => p.id === item);
+                      // Formato antiguo (solo IDs) - también buscar en BD
+                      const product = dbProducts.find((p) => p.id === item);
                       if (product) {
                         productLines.push(product.name);
                       }

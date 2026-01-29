@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Company } from '@prisma/client';
 import { MessagesTemplatesService } from '../../messages-templates/messages-templates.service';
+import { ProductsService } from '../../products/products.service';
 import { ServiceConfig } from './service-validator.service';
 
 export interface ResolvedService {
@@ -17,7 +18,10 @@ export interface ResolvedService {
 
 @Injectable()
 export class ServiceConfigResolverService {
-  constructor(private messagesTemplates: MessagesTemplatesService) {}
+  constructor(
+    private messagesTemplates: MessagesTemplatesService,
+    private productsService: ProductsService,
+  ) {}
 
   /**
    * Normaliza el servicio seleccionado y construye:
@@ -26,8 +30,22 @@ export class ServiceConfigResolverService {
    * - metadata UX (pedido vs reserva)
    */
   async resolve(company: Company, companyType: string, serviceKey?: string): Promise<ResolvedService> {
-    const config = (company.config as any) || {};
-    const availableServices: Record<string, any> = config.services || {};
+    // Obtener servicios desde BD (productos con category='service')
+    const dbProducts = await this.productsService.findByCompany(company.id);
+    const serviceProducts = dbProducts.filter(p => p.category === 'service');
+    
+    // Construir availableServices desde BD (compatibilidad con código existente)
+    const availableServices: Record<string, any> = {};
+    for (const product of serviceProducts) {
+      const metadata = (product.metadata as any) || {};
+      availableServices[metadata.serviceKey || product.id] = {
+        name: product.name,
+        description: product.description,
+        enabled: product.active,
+        ...metadata, // incluye requiresProducts, requiresPayment, etc.
+      };
+    }
+    
     const hasMultipleServices = Object.keys(availableServices).length > 1;
 
     const rawServiceConfig = serviceKey ? availableServices[serviceKey] : undefined;

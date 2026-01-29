@@ -15,9 +15,9 @@ model Company {
   phone       String?
   active      Boolean  @default(true)
   
-  // Configuración JSON
+  // Configuración JSON (solo settings estáticos: horarios, servicios config, wompi)
   config      Json     @default("{}")
-  // Ejemplo: { "hours": {"monday": "09:00-18:00"}, "capacity": 10 }
+  // Ejemplo: { "hours": {"monday": "09:00-18:00"}, "services": {...} }
   
   // Configuración de pagos
   requiresPayment     Boolean @default(false)
@@ -34,6 +34,9 @@ model Company {
   reservations Reservation[]
   payments     Payment[]
   serviceKeywords ServiceKeyword[]
+  products     Product[]
+  resources    Resource[]
+  promotions   Promotion[]
   
   @@map("companies")
 }
@@ -102,6 +105,7 @@ model Reservation {
   updatedAt   DateTime @updatedAt
   
   company     Company  @relation(fields: [companyId], references: [id])
+  items       ReservationItem[]
   
   @@map("reservations")
 }
@@ -219,3 +223,177 @@ model ServiceKeyword {
   @@map("service_keywords")
 }
 
+// ============================================
+// NUEVAS TABLAS: PRODUCTOS Y RECURSOS
+// ============================================
+
+model Product {
+  id          String   @id @default(uuid())
+  companyId   String
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  
+  name        String
+  description String?
+  price       Float
+  category    String
+  
+  // Para servicios con duración (clínica, spa)
+  duration    Int?     // minutos
+  
+  // Control de stock (para productos físicos)
+  hasStock    Boolean  @default(false) // true = tiene stock físico
+  stock       Int      @default(0)
+  minStock    Int      @default(5)     // Alerta de stock bajo
+  
+  // Disponibilidad
+  available   Boolean  @default(true)
+  active      Boolean  @default(true)
+  
+  // Para búsquedas y matching
+  keywords    String[] // ["limpieza", "dental", "dientes"]
+  
+  // Imagen (futuro)
+  imageUrl    String?
+  
+  // Metadata adicional
+  metadata    Json     @default("{}")
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relaciones
+  reservationItems ReservationItem[]
+  stockMovements   StockMovement[]
+  promotions       ProductPromotion[]
+  
+  @@index([companyId, category])
+  @@index([companyId, available, active])
+  @@index([companyId, hasStock])
+  @@map("products")
+}
+
+model Resource {
+  id          String   @id @default(uuid())
+  companyId   String
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  
+  name        String
+  type        String   // 'mesa', 'consultorio', 'sala', 'silla'
+  capacity    Int      // Capacidad de personas
+  
+  // Disponibilidad
+  available   Boolean  @default(true)
+  active      Boolean  @default(true)
+  
+  // Metadata adicional
+  metadata    Json     @default("{}")
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@index([companyId, type, available])
+  @@index([companyId, active])
+  @@map("resources")
+}
+
+model ReservationItem {
+  id            String   @id @default(uuid())
+  reservationId String
+  reservation   Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  
+  productId     String
+  product       Product  @relation(fields: [productId], references: [id])
+  
+  quantity      Int      @default(1)
+  price         Float    // Precio al momento de la reserva
+  
+  createdAt     DateTime @default(now())
+  
+  @@index([reservationId])
+  @@index([productId])
+  @@map("reservation_items")
+}
+
+model StockMovement {
+  id            String   @id @default(uuid())
+  productId     String
+  product       Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  
+  type          String   // 'in', 'out', 'adjustment'
+  quantity      Int
+  previousStock Int
+  newStock      Int
+  
+  reason        String?  // 'sale', 'restock', 'damaged', 'expired', etc.
+  notes         String?
+  
+  // Auditoría
+  userId        String?
+  reservationId String?
+  
+  createdAt     DateTime @default(now())
+  
+  @@index([productId, createdAt])
+  @@index([type])
+  @@map("stock_movements")
+}
+
+// ============================================
+// PROMOCIONES (FUTURO)
+// ============================================
+
+model Promotion {
+  id          String   @id @default(uuid())
+  companyId   String
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  
+  name        String
+  description String?
+  type        String   // 'percentage', 'fixed', 'bogo', '2x1'
+  
+  // Descuento
+  discountPercentage Float?  // 10 = 10%
+  discountAmount     Float?  // $5000
+  
+  // Validez
+  startDate   DateTime
+  endDate     DateTime
+  active      Boolean  @default(true)
+  
+  // Condiciones
+  minPurchase Float?   // Compra mínima
+  maxUses     Int?     // Máximo de usos
+  currentUses Int      @default(0)
+  
+  // Código de promoción
+  code        String?  @unique
+  
+  // Días válidos
+  validDays   String[] // ["monday", "tuesday"]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  products    ProductPromotion[]
+  
+  @@index([companyId, active])
+  @@index([code])
+  @@index([startDate, endDate])
+  @@map("promotions")
+}
+
+model ProductPromotion {
+  id          String   @id @default(uuid())
+  promotionId String
+  promotion   Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
+  
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  
+  createdAt   DateTime @default(now())
+  
+  @@unique([promotionId, productId])
+  @@index([promotionId])
+  @@index([productId])
+  @@map("product_promotions")
+}
