@@ -408,5 +408,16 @@ ${reservationsText.join('\n')}
     
     return response.text() || null;
   }
+
+  /**
+   * Obtiene el cliente de OpenAI para uso directo
+   * Útil para llamadas específicas que no pasan por detect()
+   */
+  getOpenAIClient(): OpenAI {
+    if (!this.openai) {
+      throw new Error('OpenAI client no está disponible. Verifica OPENAI_API_KEY en .env');
+    }
+    return this.openai;
+  }
 }
 

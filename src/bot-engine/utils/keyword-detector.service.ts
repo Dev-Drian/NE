@@ -176,6 +176,21 @@ export class KeywordDetectorService {
   }
 
   /**
+   * Detecta si el mensaje es una confirmación positiva
+   * Útil para detectar cuando el usuario dice "sí" a una pregunta del bot
+   */
+  isConfirmation(message: string): boolean {
+    const confirmationKeywords = [
+      'sí', 'si', 'yes', 'ok', 'okay', 'claro', 'por supuesto', 
+      'perfecto', 'vale', 'de acuerdo', 'está bien', 'esta bien',
+      'correcto', 'exacto', 'bueno', 'dale', 'adelante', 'envíame',
+      'envíamelo', 'muéstrame', 'muestrame', 'muéstralo', 'muestralo',
+      'dame', 'quiero ver', 'quiero verlo', 'sí por favor', 'si por favor'
+    ];
+    return this.textUtils.containsAnyKeyword(message, confirmationKeywords);
+  }
+
+  /**
    * Obtiene todas las categorías detectadas en el mensaje
    */
   detectAllCategories(message: string): string[] {

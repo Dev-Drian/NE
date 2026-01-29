@@ -193,15 +193,25 @@ export class AvailabilityService {
     
     if (serviceTypes && data.service && serviceTypes[data.service]) {
       console.log('✅ Entrando a checkServiceAvailability');
+      // Calcular capacidad del servicio basándose en recursos si no está definida
+      let serviceCapacity = serviceTypes[data.service].capacity;
+      if (!serviceCapacity && data.service === 'mesa') {
+        // Para servicio "mesa", calcular capacidad total de las mesas disponibles
+        const mesaResources = resources.filter((r: any) => r.type === 'mesa' && r.available !== false);
+        serviceCapacity = mesaResources.reduce((sum: number, r: any) => sum + (r.capacity || 0), 0);
+        console.log('📊 Capacidad calculada de mesas:', serviceCapacity, 'mesas encontradas:', mesaResources.length);
+      }
+      
       return this.checkServiceAvailability(
         data.service,
-        serviceTypes[data.service],
+        { ...serviceTypes[data.service], capacity: serviceCapacity },
         reservationsOnDate,
         requestedGuests,
         serviceTypes,
         openTime,
         closeTime,
         requestedTime,
+        resources, // Pasar recursos para validación adicional
       );
     }
 
@@ -231,6 +241,7 @@ export class AvailabilityService {
     openTime: string,
     closeTime: string,
     requestedTime: string,
+    resources?: any[], // Recursos para validación adicional
   ): AvailabilityCheck {
     // LOG PARA DEPURACIÓN
     console.log('\n========== checkServiceAvailability ==========');

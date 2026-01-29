@@ -23,6 +23,17 @@ Documento de referencia rápida con todos los comandos necesarios para trabajar 
 docker-compose up -d
 ```
 
+### Rebuild y levantar servicios (reconstruye imágenes)
+```bash
+docker-compose up -d --build
+```
+
+### Rebuild forzado (sin cache)
+```bash
+docker-compose build --no-cache
+docker-compose up -d
+```
+
 ### Ver estado de los contenedores
 ```bash
 docker-compose ps
@@ -55,6 +66,13 @@ docker-compose down -v
 docker-compose restart
 ```
 
+### Rebuild completo (detener, rebuild, levantar)
+```bash
+docker-compose down
+docker-compose build --no-cache
+docker-compose up -d
+```
+
 ### Acceder a PostgreSQL
 ```bash
 docker exec -it bot-reservas-postgres psql -U postgres -d bot_reservas
@@ -67,37 +85,66 @@ docker exec -it bot-reservas-redis redis-cli
 
 ---
 
-## 💾 Base de Datos
+## 💾 Base de Datos - Prisma
 
-### Resetear BD completamente (borra TODO y ejecuta seed)
+### Resetear BD completamente (borra TODO, migra y ejecuta seed)
 ```bash
 npx prisma migrate reset --force
 ```
 
-Este comando:
+Este comando hace todo:
 - ✅ Borra toda la base de datos
 - ✅ Ejecuta las migraciones
 - ✅ Ejecuta el seeder automáticamente
 - ✅ Genera el `conversations-examples.json` con datos reales
 
-### Solo ejecutar migraciones
+### Ejecutar migraciones (aplicar cambios del schema)
 ```bash
 npm run prisma:migrate
 ```
 
-### Solo ejecutar seeder
+O directamente:
+```bash
+npx prisma migrate dev
+```
+
+### Crear nueva migración
+```bash
+npx prisma migrate dev --name nombre_de_la_migracion
+```
+
+### Ejecutar seeder (poblar BD con datos de prueba)
 ```bash
 npm run prisma:seed
 ```
 
-### Generar cliente Prisma
+O directamente:
+```bash
+npx prisma db seed
+```
+
+### Generar cliente Prisma (después de cambiar schema)
 ```bash
 npm run prisma:generate
-```asdsdsa
+```
+
+O directamente:
+```bash
+npx prisma generate
+```
 
 ### Abrir Prisma Studio (interfaz visual)
 ```bash
 npm run prisma:studio
+```
+
+### Flujo completo: Resetear BD + Limpiar Redis
+```bash
+# 1. Resetear BD (migra + seed)
+npx prisma migrate reset --force
+
+# 2. Limpiar Redis
+docker exec bot-reservas-redis redis-cli FLUSHALL
 ```
 
 ---
@@ -238,13 +285,13 @@ Esto abre una interfaz web en `http://localhost:5555` donde puedes:
 
 ## 🔄 Reseteo Completo del Sistema
 
-### Opción 1: Reseteo Total (Recomendado)
+### Opción 1: Reseteo Total con Rebuild (Recomendado)
 ```bash
 # 1. Detener servicios y borrar volúmenes
 docker-compose down -v
 
-# 2. Levantar servicios nuevamente
-docker-compose up -d
+# 2. Rebuild y levantar servicios
+docker-compose up -d --build
 
 # 3. Esperar a que PostgreSQL esté listo (10 segundos)
 sleep 10
@@ -259,9 +306,9 @@ docker exec bot-reservas-redis redis-cli FLUSHALL
 npm run start:dev
 ```
 
-### Opción 2: Solo BD (mantiene Docker)
+### Opción 2: Solo BD y Redis (mantiene Docker)
 ```bash
-# 1. Resetear BD
+# 1. Resetear BD (migra + seed)
 npx prisma migrate reset --force
 
 # 2. Limpiar Redis
@@ -270,6 +317,23 @@ docker exec bot-reservas-redis redis-cli FLUSHALL
 
 ### Opción 3: Solo Redis
 ```bash
+docker exec bot-reservas-redis redis-cli FLUSHALL
+```
+
+### Opción 4: Rebuild Docker + Resetear BD
+```bash
+# 1. Rebuild Docker
+docker-compose down
+docker-compose build --no-cache
+docker-compose up -d
+
+# 2. Esperar PostgreSQL
+sleep 10
+
+# 3. Resetear BD
+npx prisma migrate reset --force
+
+# 4. Limpiar Redis
 docker exec bot-reservas-redis redis-cli FLUSHALL
 ```
 
@@ -416,4 +480,6 @@ npm run prisma:generate
 
 ---
 
-**Última actualización:** 2026-01-20
+---
+
+**Última actualización:** 2026-01-21

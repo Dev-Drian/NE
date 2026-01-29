@@ -101,12 +101,89 @@ export class BotEngineService {
         () => this.conversations.getContext(userId, dto.companyId)
       );
 
-      // 5. Agregar mensaje del usuario al historial
-      // Invalidar cache antes de escribir para evitar que otros procesos lean datos obsoletos
-      await this.contextCache.invalidateContext(contextKey);
-      await this.conversations.addMessage(userId, dto.companyId, 'user', dto.message);
+      // 5. DETECTAR SI EL USUARIO QUIERE VOLVER A LA CONVERSACIÓN ANTERIOR
+      // Si hay un contexto guardado en metadata, verificar si quiere regresar
+      if (context.metadata?.previousContext) {
+        const wantsToGoBack = await this.detectWantsToGoBack(dto.message);
+        
+        if (wantsToGoBack) {
+          this.logger.log('⏪ Usuario quiere volver a la conversación anterior. Restaurando...');
+          
+          // Restaurar contexto anterior
+          const restoredContext: any = {
+            ...context.metadata.previousContext,
+            conversationHistory: [
+              ...context.conversationHistory,
+              { role: 'user', content: dto.message, timestamp: new Date() }
+            ],
+            metadata: {
+              ...context.metadata.previousContext.metadata,
+              previousContext: undefined // Limpiar el guardado
+            }
+          };
+          
+          await this.contextCache.invalidateContext(contextKey);
+          await this.conversations.saveContext(userId, dto.companyId, restoredContext);
+          
+          // Actualizar contexto local
+          Object.assign(context, restoredContext);
+          
+          this.logger.log('✅ Contexto anterior restaurado.');
+        }
+      }
+      
+      // 6. DETECTAR SI EL USUARIO QUIERE EMPEZAR UNA NUEVA CONVERSACIÓN
+      // Si hay una conversación en progreso (collecting), verificar si quiere empezar algo nuevo
+      if (context.stage === 'collecting' && context.lastIntention) {
+        const isNewConversation = await this.detectNewConversation(
+          dto.message,
+          context.lastIntention,
+          context.collectedData
+        );
+        
+        if (isNewConversation) {
+          this.logger.log('🔄 Nueva conversación detectada. Guardando contexto actual y reseteando...');
+          
+          // GUARDAR contexto actual antes de resetear (por si quiere volver)
+          const savedContext = {
+            stage: context.stage,
+            collectedData: { ...context.collectedData },
+            lastIntention: context.lastIntention,
+            metadata: { ...context.metadata }
+          };
+          
+          // Resetear contexto manteniendo historial
+          const newContext: any = {
+            stage: 'idle' as const,
+            conversationHistory: [
+              ...context.conversationHistory,
+              { role: 'user', content: dto.message, timestamp: new Date() }
+            ],
+            collectedData: {},
+            lastIntention: null,
+            metadata: {
+              previousContext: savedContext // ← Guardar para poder volver
+            }
+          };
+          
+          // Guardar nuevo contexto limpio
+          await this.contextCache.invalidateContext(contextKey);
+          await this.conversations.saveContext(userId, dto.companyId, newContext);
+          
+          // Actualizar contexto local
+          Object.assign(context, newContext);
+          
+          this.logger.log('✅ Contexto reseteado. Iniciando nueva conversación. (Anterior guardado por si quiere volver)');
+        }
+      }
 
-      // 6. LÓGICA CONTEXTUAL: Si estamos en modo "collecting" con intención "reservar"
+      // 7. Agregar mensaje del usuario al historial (si no se agregó ya en el reset)
+      if (context.stage !== 'idle' || !context.conversationHistory.some(m => m.content === dto.message && m.role === 'user')) {
+        await this.contextCache.invalidateContext(contextKey);
+        await this.conversations.addMessage(userId, dto.companyId, 'user', dto.message);
+      }
+
+      // 8. LÓGICA CONTEXTUAL: Si estamos en modo "collecting" con intención "reservar"
       // debemos forzar la continuidad de la reserva, PERO solo si el mensaje no es un saludo
       const isContinuingReservation = 
         context.stage === 'collecting' && context.lastIntention === 'reservar';
@@ -121,11 +198,24 @@ export class BotEngineService {
       const hasConsultaKeywords = this.keywordDetector.hasConsultaKeywords(dto.message) && !asksForProducts;
       const asksForPrice = this.keywordDetector.asksForPrice(dto.message);
       const asksForHistory = this.keywordDetector.asksForHistory(dto.message);
+      const isConfirmation = this.keywordDetector.isConfirmation(dto.message);
     
     // ============================================
     // CONSULTA DE HISTORIAL - COMPLETAMENTE DINÁMICO
     // ============================================
-    if (asksForHistory) {
+    // Detectar si el usuario confirma después de que el bot preguntó si quiere ver reservas
+    const lastAssistantMessage = context.conversationHistory
+      .filter(m => m.role === 'assistant')
+      .slice(-1)[0]?.content?.toLowerCase() || '';
+    
+    const botAskedToShowReservations = lastAssistantMessage.includes('te gustaría que te la envíe') ||
+                                      lastAssistantMessage.includes('mostrar') ||
+                                      lastAssistantMessage.includes('envíe por aquí');
+    
+    // Si el usuario confirma y el bot preguntó sobre mostrar reservas, tratar como consulta de historial
+    const shouldShowHistory = asksForHistory || (isConfirmation && botAskedToShowReservations);
+    
+    if (shouldShowHistory) {
       try {
         // Consultar todas las reservas/pedidos del usuario en la BD
         const userReservations = await this.reservations.findByUserAndCompany(userId, dto.companyId);
@@ -1110,5 +1200,117 @@ export class BotEngineService {
     const hour12 = hours % 12 || 12;
     return `${hour12}:${String(minutes).padStart(2, '0')} ${period}`;
   }
+
+  /**
+   * Detecta si el usuario quiere VOLVER a la conversación anterior
+   */
+  private async detectWantsToGoBack(message: string): Promise<boolean> {
+    const prompt = `Analiza si el usuario quiere VOLVER o CONTINUAR con algo que estaba haciendo antes.
+
+MENSAJE DEL USUARIO: "${message}"
+
+Responde "true" si el usuario dice algo como:
+- "no, mejor continúo con lo anterior"
+- "vuelvo a lo de antes"
+- "mejor sigo con el pedido"
+- "regreso a mi reserva"
+- "cancela, quiero lo anterior"
+- "olvídalo, continúo con lo otro"
+
+Responde "false" para cualquier otro mensaje.
+
+Responde ÚNICAMENTE: true o false`;
+
+    try {
+      const response = await this.layer3.getOpenAIClient().chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.1,
+        max_tokens: 10
+      });
+      
+      const answer = response.choices[0]?.message?.content?.trim().toLowerCase();
+      const result = answer === 'true';
+      
+      this.logger.log(`⏪ DetectWantsToGoBack: mensaje="${message.substring(0, 50)}", resultado=${result}`);
+      
+      return result;
+    } catch (error) {
+      this.logger.error('Error detectando si quiere volver:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Detecta si el usuario quiere empezar una NUEVA conversación o continuar la actual
+   * Usa OpenAI para análisis inteligente del contexto
+   */
+  private async detectNewConversation(
+    message: string,
+    currentIntention: string,
+    collectedData: any
+  ): Promise<boolean> {
+    // Obtener información del servicio actual
+    const currentService = collectedData?.service || 'ninguno';
+    const hasDate = !!collectedData?.date;
+    const hasTime = !!collectedData?.time;
+    const hasProducts = collectedData?.products?.length > 0;
+    
+    const prompt = `Analiza si el usuario quiere EMPEZAR UNA NUEVA CONVERSACIÓN o CONTINUAR la actual.
+
+CONTEXTO ACTUAL:
+- Intención actual: ${currentIntention}
+- Servicio actual: ${currentService}
+- Tiene fecha: ${hasDate ? 'Sí' : 'No'}
+- Tiene hora: ${hasTime ? 'Sí' : 'No'}
+- Tiene productos: ${hasProducts ? 'Sí' : 'No'}
+
+MENSAJE DEL USUARIO: "${message}"
+
+INSTRUCCIONES:
+Responde SOLO "true" si el usuario quiere:
+- Empezar una nueva reserva/pedido
+- Hacer algo diferente (cambiar de servicio, cancelar y empezar otro)
+- Comenzar de nuevo desde cero
+
+Responde "false" si el usuario está:
+- Dando información que se le pidió (dirección, teléfono, productos, etc.)
+- Respondiendo preguntas del sistema
+- Aclarando o corrigiendo datos de la conversación actual
+- Confirmando información
+
+EJEMPLOS:
+Usuario: "ahora quiero hacer una reserva" → true (nueva intención)
+Usuario: "quiero otra reserva" → true (nueva intención)  
+Usuario: "mejor hago un domicilio" → true (cambio de servicio)
+Usuario: "mi dirección es calle 123" → false (dando información)
+Usuario: "3145139118" → false (dando teléfono)
+Usuario: "a las 8 pm" → false (dando hora)
+Usuario: "quiero una pizza" → false (dando producto)
+Usuario: "mañana" → false (dando fecha)
+
+Responde ÚNICAMENTE: true o false`;
+
+    try {
+      const response = await this.layer3.getOpenAIClient().chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.1,
+        max_tokens: 10
+      });
+      
+      const answer = response.choices[0]?.message?.content?.trim().toLowerCase();
+      const result = answer === 'true';
+      
+      this.logger.log(`🔍 DetectNewConversation: mensaje="${message.substring(0, 50)}", resultado=${result}`);
+      
+      return result;
+    } catch (error) {
+      this.logger.error('Error detectando nueva conversación:', error);
+      // En caso de error, asumir que continúa (más seguro)
+      return false;
+    }
+  }
 }
+
 
