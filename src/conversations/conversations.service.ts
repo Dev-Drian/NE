@@ -25,22 +25,120 @@ export class ConversationsService implements OnModuleInit, OnModuleDestroy {
 
   async getContext(userId: string, companyId: string): Promise<ConversationState> {
     const key = this.getKey(userId, companyId);
+    // Intentar obtener de Redis primero (más rápido)
     const data = await this.redis.get(key);
 
-    if (!data) {
-      return {
-        stage: 'idle',
-        collectedData: {},
-        conversationHistory: [],
-      };
+    if (data) {
+      return JSON.parse(data);
     }
 
-    return JSON.parse(data);
+    // Si no está en Redis, intentar obtener de BD
+    try {
+      let user = await this.prisma.user.findUnique({
+        where: { id: userId },
+      });
+
+      if (!user) {
+        user = await this.prisma.user.findUnique({
+          where: { phone: userId },
+        });
+      }
+
+      if (user) {
+        const conversation = await this.prisma.conversation.findFirst({
+          where: {
+            userId: user.id,
+            companyId,
+          },
+          orderBy: {
+            createdAt: 'desc',
+          },
+        });
+
+        if (conversation && conversation.context) {
+          const context = conversation.context as any;
+          // Restaurar en Redis para próximas consultas
+          await this.redis.setex(key, this.TTL, JSON.stringify(context));
+          return context;
+        }
+      }
+    } catch (error) {
+      console.error('Error obteniendo contexto de BD:', error);
+    }
+
+    // Si no hay contexto en ningún lado, retornar estado inicial
+    return {
+      stage: 'idle',
+      collectedData: {},
+      conversationHistory: [],
+    };
   }
 
   async saveContext(userId: string, companyId: string, state: ConversationState): Promise<void> {
     const key = this.getKey(userId, companyId);
+    // Guardar en Redis (cache rápido)
     await this.redis.setex(key, this.TTL, JSON.stringify(state));
+    
+    // También persistir en BD para recordar contexto a largo plazo
+    try {
+      // Asegurar que tenemos un usuario válido
+      let user = await this.prisma.user.findUnique({
+        where: { id: userId },
+      });
+
+      if (!user) {
+        user = await this.prisma.user.findUnique({
+          where: { phone: userId },
+        });
+
+        if (!user) {
+          user = await this.prisma.user.create({
+            data: {
+              id: `user-${userId}`,
+              phone: userId,
+              name: null,
+            },
+          });
+        }
+      }
+
+      // Buscar conversación existente o crear nueva
+      const existing = await this.prisma.conversation.findFirst({
+        where: {
+          userId: user.id,
+          companyId,
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+      });
+
+      if (existing) {
+        // Actualizar contexto existente
+        await this.prisma.conversation.update({
+          where: { id: existing.id },
+          data: {
+            context: state as any,
+            state: state.stage || 'greeting',
+            lastMessageAt: new Date(),
+          },
+        });
+      } else {
+        // Crear nueva conversación con contexto
+        await this.prisma.conversation.create({
+          data: {
+            userId: user.id,
+            companyId,
+            state: state.stage || 'greeting',
+            context: state as any,
+            lastMessageAt: new Date(),
+          },
+        });
+      }
+    } catch (error) {
+      // No fallar si hay error al guardar en BD, Redis es suficiente para operación
+      console.error('Error guardando contexto en BD:', error);
+    }
   }
 
   async addMessage(
