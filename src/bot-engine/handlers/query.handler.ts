@@ -436,6 +436,84 @@ export class QueryHandler implements IIntentionHandler {
         }
         reply += '\n';
       }
+    } else if (companyType === 'chalet') {
+      // ========== CHALET / FINCA VACACIONAL ==========
+      reply = `🏡 **Servicios de ${company.name}:**\n\n`;
+      reply += `¡Disfruta de nuestras fincas con piscina, jacuzzi y BBQ!\n\n`;
+      
+      for (const service of services) {
+        let emoji = '🏠';
+        if (service.key === 'alquiler_dia') emoji = '☀️';
+        else if (service.key === 'alquiler_finde') emoji = '🌴';
+        else if (service.key === 'alquiler_semana') emoji = '🏖️';
+        else if (service.key === 'evento_especial') emoji = '🎉';
+
+        const price = service.basePrice 
+          ? this.formatPrice(service.basePrice)
+          : 'Consultar';
+
+        reply += `${emoji} **${service.name}** - ${price}\n`;
+        if (service.description) {
+          reply += `   _${service.description}_\n`;
+        }
+        
+        // Info del config
+        if (service.config?.maxGuests) {
+          reply += `   👥 Capacidad: hasta ${service.config.maxGuests} personas\n`;
+        }
+        if (service.config?.checkIn && service.config?.checkOut) {
+          reply += `   🕐 Check-in: ${service.config.checkIn} | Check-out: ${service.config.checkOut}\n`;
+        }
+        if (service.config?.includesPool || service.config?.includesJacuzzi || service.config?.includesBBQ) {
+          const amenities = [];
+          if (service.config?.includesPool) amenities.push('Piscina');
+          if (service.config?.includesJacuzzi) amenities.push('Jacuzzi');
+          if (service.config?.includesBBQ) amenities.push('BBQ');
+          reply += `   ✨ Incluye: ${amenities.join(', ')}\n`;
+        }
+        if (service.config?.allowsPets) {
+          reply += `   🐾 Acepta mascotas\n`;
+        }
+        reply += '\n';
+      }
+    } else if (companyType === 'clothing_store') {
+      // ========== TIENDA DE ROPA ==========
+      reply = `👗 **Servicios de ${company.name}:**\n\n`;
+      reply += `¡Descubre las últimas tendencias en moda!\n\n`;
+      
+      for (const service of services) {
+        let emoji = '🛍️';
+        if (service.key === 'compra_tienda') emoji = '🏪';
+        else if (service.key === 'compra_online') emoji = '📦';
+        else if (service.key === 'apartado') emoji = '🔖';
+        else if (service.key === 'personal_shopping') emoji = '👠';
+        else if (service.key === 'alteraciones') emoji = '✂️';
+        else if (service.key === 'consulta_disponibilidad') emoji = '🔍';
+
+        const price = service.basePrice 
+          ? this.formatPrice(service.basePrice)
+          : '';
+
+        reply += `${emoji} **${service.name}**${price ? ` - ${price}` : ''}\n`;
+        if (service.description) {
+          reply += `   _${service.description}_\n`;
+        }
+        
+        // Info del config según el servicio
+        if (service.config?.deliveryFee && service.config?.freeDeliveryThreshold) {
+          reply += `   🚚 Envío: ${this.formatPrice(service.config.deliveryFee)} (Gratis desde ${this.formatPrice(service.config.freeDeliveryThreshold)})\n`;
+        }
+        if (service.config?.returnDays) {
+          reply += `   ↩️ Devoluciones: ${service.config.returnDays} días\n`;
+        }
+        if (service.config?.maxHoldDays) {
+          reply += `   📅 Tiempo de apartado: hasta ${service.config.maxHoldDays} días\n`;
+        }
+        if (service.config?.duration) {
+          reply += `   ⏱️ Duración: ${service.config.duration} min\n`;
+        }
+        reply += '\n';
+      }
     } else {
       // Genérico
       reply = `📋 **Servicios disponibles:**\n\n`;
@@ -522,6 +600,18 @@ export class QueryHandler implements IIntentionHandler {
         items: 'servicios',
         item: 'servicio',
         services: 'Especialidades'
+      },
+      chalet: {
+        catalog: 'Opciones de Alquiler',
+        items: 'alquileres',
+        item: 'alquiler',
+        services: 'Tipos de Alquiler'
+      },
+      clothing_store: {
+        catalog: 'Colección',
+        items: 'prendas',
+        item: 'prenda',
+        services: 'Servicios'
       },
       default: {
         catalog: 'Catálogo',
