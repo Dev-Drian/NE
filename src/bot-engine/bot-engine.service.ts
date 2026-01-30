@@ -16,6 +16,15 @@ import { ContextCacheService } from './utils/context-cache.service';
 import { KeywordDetectorService } from './utils/keyword-detector.service';
 import { ReservationFlowService } from './handlers/reservation/reservation-flow.service';
 import { ResourceValidatorService } from './services/resource-validator.service';
+import { ConversationLoggingService } from './services/conversation-logging.service';
+import { UserPreferencesService } from './services/user-preferences.service';
+import { ReferenceResolverService } from './services/reference-resolver.service';
+// ===== SERVICIOS NLU AVANZADOS =====
+import { SpellCheckerService } from './utils/spell-checker.service';
+import { LearningService } from './services/learning.service';
+import { SynonymService } from './utils/synonym.service';
+import { DetectionExplainerService } from './utils/detection-explainer.service';
+import { EntityNormalizerService } from './utils/entity-normalizer.service';
 import { ProcessMessageDto } from './dto/process-message.dto';
 import { DetectionResult } from './dto/detection-result.dto';
 import { CONFIDENCE_THRESHOLDS } from './constants/detection.constants';
@@ -56,6 +65,17 @@ export class BotEngineService {
     private keywordDetector: KeywordDetectorService,
     private reservationFlow: ReservationFlowService,
     private resourceValidator: ResourceValidatorService,
+    // ===== SERVICIOS AVANZADOS (Sistema ChatGPT-like) =====
+    private conversationLogging: ConversationLoggingService,
+    private userPreferences: UserPreferencesService,
+    private referenceResolver: ReferenceResolverService,
+    // ===== SERVICIOS NLU AVANZADOS =====
+    private spellChecker: SpellCheckerService,
+    private learningService: LearningService,
+    private synonymService: SynonymService,
+    private detectionExplainer: DetectionExplainerService,
+    private entityNormalizer: EntityNormalizerService,
+    // Handlers
     private greetingHandler: GreetingHandler,
     private cancelHandler: CancelHandler,
     private queryHandler: QueryHandler,
@@ -64,6 +84,8 @@ export class BotEngineService {
   ) {}
 
   async processMessage(dto: ProcessMessageDto): Promise<ProcessMessageResponse> {
+    const processingStartTime = Date.now();
+    
     try {
       // 1. VALIDAR QUE LA EMPRESA EXISTE (CRÍTICO - HACER PRIMERO)
       // Usar cache para evitar consultas redundantes
@@ -93,6 +115,17 @@ export class BotEngineService {
         }
       }
 
+      // 2.1 CARGAR PREFERENCIAS DE USUARIO (memoria a largo plazo)
+      let userContext: any = {};
+      try {
+        userContext = await this.userPreferences.getLearnedContext(userId, dto.companyId);
+        if (userContext.totalReservations > 0) {
+          this.logger.log(`📚 Contexto aprendido: ${JSON.stringify(userContext)}`);
+        }
+      } catch (prefError) {
+        this.logger.warn('Error cargando preferencias de usuario:', prefError);
+      }
+
       // 3. Invalidar cache ANTES de operaciones de escritura para evitar race conditions
       const contextKey = `${userId}:${dto.companyId}`;
       await this.contextCache.invalidateContext(contextKey);
@@ -102,6 +135,74 @@ export class BotEngineService {
         contextKey,
         () => this.conversations.getContext(userId, dto.companyId)
       );
+
+      // 4.1 Guardar timestamp de inicio para métricas
+      context.metadata = context.metadata || {};
+      context.metadata.processingStartTime = processingStartTime;
+      context.metadata.userPreferences = userContext;
+
+      // ===== PREPROCESAMIENTO NLU =====
+      // 4.2 Corrección ortográfica automática
+      let processedMessage = dto.message;
+      let spellCorrections: Array<{original: string; suggestion: string}> = [];
+      try {
+        const spellResult = this.spellChecker.checkAndCorrect(dto.message);
+        if (spellResult.wasModified) {
+          processedMessage = spellResult.corrected;
+          spellCorrections = spellResult.corrections.map(c => ({ original: c.original, suggestion: c.suggestion }));
+          this.logger.debug(`📝 Ortografía corregida: "${dto.message}" → "${processedMessage}"`);
+        }
+      } catch (spellError) {
+        this.logger.warn('Error en corrección ortográfica:', spellError);
+      }
+
+      // 4.3 Normalización de sinónimos
+      let normalizedMessage = processedMessage;
+      try {
+        normalizedMessage = this.synonymService.normalizeMessage(processedMessage);
+        if (normalizedMessage !== processedMessage) {
+          this.logger.debug(`🔄 Sinónimos normalizados: "${processedMessage}" → "${normalizedMessage}"`);
+        }
+      } catch (synError) {
+        this.logger.warn('Error en normalización de sinónimos:', synError);
+      }
+
+      // 4.4 Extracción de entidades
+      let extractedEntities = { entities: [], hasEntities: false, normalizedMessage: '' };
+      try {
+        extractedEntities = this.entityNormalizer.extractAll(normalizedMessage);
+        if (extractedEntities.hasEntities) {
+          this.logger.debug(`🎯 Entidades extraídas: ${JSON.stringify(extractedEntities.entities.map(e => ({type: e.type, value: e.value})))}`);
+          // Guardar en metadata para handlers
+          context.metadata.extractedEntities = extractedEntities.entities;
+        }
+      } catch (entityError) {
+        this.logger.warn('Error extrayendo entidades:', entityError);
+      }
+
+      // 4.5 RESOLUCIÓN DE REFERENCIAS: Enriquecer mensaje con contexto
+      let enrichedMessage = normalizedMessage;
+      try {
+        const referenceResult = await this.referenceResolver.enrichMessageWithContext(
+          normalizedMessage,
+          context
+        );
+        if (referenceResult.wasEnriched) {
+          enrichedMessage = referenceResult.enrichedMessage;
+          this.logger.log(`🔗 Referencia resuelta: "${normalizedMessage}" → "${enrichedMessage}"`);
+        }
+      } catch (refError) {
+        this.logger.warn('Error resolviendo referencias:', refError);
+      }
+
+      // Guardar metadata de preprocesamiento NLU para debugging
+      context.metadata.nluPreprocessing = {
+        originalMessage: dto.message,
+        spellCorrected: spellCorrections.length > 0 ? processedMessage : null,
+        synonymNormalized: normalizedMessage !== processedMessage ? normalizedMessage : null,
+        entitiesExtracted: extractedEntities.hasEntities ? extractedEntities.entities.length : 0,
+        finalMessage: enrichedMessage,
+      };
 
       // 5. DETECTAR SI EL USUARIO QUIERE VOLVER A LA CONVERSACIÓN ANTERIOR
       // Si hay un contexto guardado en metadata, verificar si quiere regresar
@@ -650,6 +751,28 @@ export class BotEngineService {
       }
     }
 
+    // ===== REGISTRO DE APRENDIZAJE NLU =====
+    // Registrar detección exitosa para que el sistema aprenda automáticamente
+    const detectionLayer = detection.confidence >= CONFIDENCE_THRESHOLDS.HIGH 
+      ? (detection.extractedData ? 'layer3' : 'layer1')
+      : detection.confidence >= CONFIDENCE_THRESHOLDS.MEDIUM ? 'layer2' : 'layer3';
+    
+    try {
+      await this.learningService.recordDetection({
+        originalMessage: dto.message,
+        normalizedMessage: normalizedMessage || dto.message,
+        detectedIntention: detection.intention,
+        confidence: detection.confidence,
+        detectionLayer,
+        companyId: dto.companyId,
+        wasCorrect: true, // Asumimos correcto, se puede corregir después
+        extractedEntities: context.metadata?.extractedEntities || {},
+        timestamp: new Date(),
+      });
+    } catch (learnError) {
+      this.logger.warn('Error registrando detección para aprendizaje:', learnError);
+    }
+
     // 7. Si se detectó un teléfono en los datos extraídos, crear/actualizar usuario
     if (detection.extractedData?.phone && !dto.phone) {
       const extractedPhone = detection.extractedData.phone;
@@ -1126,7 +1249,30 @@ export class BotEngineService {
               'Lo siento, no pude procesar tu mensaje. Por favor intenta de nuevo o reformula tu pregunta.';
     }
 
-    // 16. Retornar respuesta
+    // 16. LOGGING AVANZADO: Registrar interacción para métricas y análisis
+    try {
+      const endTime = Date.now();
+      await this.conversationLogging.logInteraction({
+        companyId: dto.companyId,
+        userId,
+        conversationId,
+        userMessage: dto.message,
+        botResponse: reply,
+        detectedIntention: detection.intention,
+        confidence: detection.confidence,
+        detectionLayer: this.determineDetectionLayer(detection),
+        success: newState.stage !== 'idle' || detection.intention !== 'otro',
+        responseTimeMs: endTime - processingStartTime,
+        conversationState: newState.stage,
+        previousIntention: context.lastIntention || undefined,
+        extractedEntities: detection.extractedData || undefined,
+      });
+    } catch (logError) {
+      // No fallar el flujo principal si el logging falla
+      this.logger.warn('Error logging conversation:', logError);
+    }
+
+    // 17. Retornar respuesta
     return {
       reply,
       intention: detection.intention,
@@ -1157,6 +1303,23 @@ export class BotEngineService {
     companyType: string,
   ): Promise<{ reply: string; newState: any; missingFields?: string[] }> {
     return await this.reservationFlow.handleReservation(detection, context, dto, companyType);
+  }
+
+  /**
+   * Determina qué capa de detección fue usada basándose en la confianza
+   */
+  private determineDetectionLayer(detection: DetectionResult): 'layer1' | 'layer2' | 'layer3' | 'keyword' | 'fallback' {
+    if (detection.confidence >= 0.95) {
+      return 'layer1'; // Keywords exactos
+    } else if (detection.confidence >= 0.75) {
+      return 'layer2'; // Similitud
+    } else if (detection.confidence >= 0.5) {
+      return 'layer3'; // OpenAI/Gemini
+    } else if (detection.confidence >= 0.3) {
+      return 'keyword'; // Keywords parciales
+    } else {
+      return 'fallback'; // Sin detección clara
+    }
   }
 
   private formatHours(hours: Record<string, string>): string {

@@ -134,6 +134,13 @@ export class ReservationFlowService {
       ...filteredExtracted,
     };
 
+    // ===== PRE-LLENAR TELÉFONO DESDE WhatsApp/DTO =====
+    // Si el usuario ya tiene teléfono en dto.phone (de WhatsApp), usarlo automáticamente
+    if (dto.phone && !collected.phone) {
+      collected.phone = dto.phone;
+      this.logger.log(`📱 Teléfono pre-llenado desde WhatsApp: ${dto.phone}`);
+    }
+
     // ===== VALIDAR Y CORREGIR SERVICIO =====
     // Si el servicio extraído no es válido (ej: "Consulta general" en lugar de "cita"),
     // intentar corregirlo
@@ -161,14 +168,31 @@ export class ReservationFlowService {
           if (serviceWithProducts) {
             collected.service = serviceWithProducts;
             this.logger.log(`✅ Servicio corregido a: ${collected.service}`);
+          } else if (serviceKeys.length === 1) {
+            // Si no encuentra servicio con productos pero solo hay uno, usarlo
+            collected.service = serviceKeys[0];
+            this.logger.log(`✅ Servicio único asignado: ${collected.service}`);
+          } else {
+            // Si no podemos determinar el servicio, limpiarlo para que lo pregunte
+            delete collected.service;
+            this.logger.log(`⚠️ No se pudo determinar el servicio, se preguntará al usuario`);
           }
+        } else if (serviceKeys.length === 1) {
+          // No es un producto pero solo hay un servicio disponible
+          collected.service = serviceKeys[0];
+          this.logger.log(`✅ Servicio único asignado (default): ${collected.service}`);
+        } else {
+          // No podemos determinar el servicio, limpiarlo
+          delete collected.service;
+          this.logger.log(`⚠️ Servicio "${extracted.service}" inválido, se preguntará al usuario`);
         }
       }
     }
     
     // ===== ASIGNAR SERVICIO AUTOMÁTICO SI SOLO HAY UNO =====
     // Si la empresa solo tiene UN servicio disponible, asignarlo automáticamente
-    if (serviceKeys.length === 1 && !collected.service) {
+    // Esto aplica tanto si no hay servicio como si el servicio extraído era inválido
+    if (serviceKeys.length === 1 && (!collected.service || !availableServices[collected.service])) {
       collected.service = serviceKeys[0];
       this.logger.log(`🎯 Servicio único asignado automáticamente: ${collected.service}`);
     }

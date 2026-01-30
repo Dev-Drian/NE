@@ -37,6 +37,8 @@ model Company {
   products     Product[]
   resources    Resource[]
   promotions   Promotion[]
+  conversationLogs ConversationLog[]
+  userPreferences  UserPreference[]
   
   @@map("companies")
 }
@@ -119,6 +121,7 @@ model User {
   createdAt   DateTime @default(now())
   
   conversations Conversation[]
+  preferences   UserPreference[]
   
   @@map("users")
 }
@@ -221,6 +224,29 @@ model ServiceKeyword {
   @@index([keyword])
   @@index([active])
   @@map("service_keywords")
+}
+
+// ============================================
+// KEYWORDS DEL SISTEMA (saludos, despedidas, confirmaciones, etc.)
+// ============================================
+model SystemKeyword {
+  id          String   @id @default(uuid())
+  category    String   // "greeting", "farewell", "confirmation", "negation", "products", "price", "history", "payment", "cancel", "availability", "details", "delivery", "para_llevar"
+  keyword     String   // El keyword o frase
+  type        String   @default("contains") // "exact", "contains", "startsWith", "endsWith", "regex"
+  weight      Float    @default(1.0) // Peso para priorización (0.0-1.0)
+  language    String   @default("es")
+  active      Boolean  @default(true)
+  description String?  // Descripción opcional del keyword
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@unique([category, keyword, language])
+  @@index([category])
+  @@index([active])
+  @@index([language])
+  @@map("system_keywords")
 }
 
 // ============================================
@@ -397,3 +423,93 @@ model ProductPromotion {
   @@index([productId])
   @@map("product_promotions")
 }
+
+// ============================================
+// LOGS Y MÉTRICAS DE CONVERSACIÓN
+// ============================================
+
+model ConversationLog {
+  id              String   @id @default(uuid())
+  userId          String
+  companyId       String
+  company         Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  conversationId  String?
+  
+  // Mensaje original
+  userMessage       String
+  normalizedMessage String?
+  
+  // Detección de intención
+  detectedIntention String?
+  confidence        Float    @default(0)
+  detectionLayer    String?  // 'layer1', 'layer2', 'layer3', 'keyword'
+  matchedPatterns   Json     @default("[]")
+  
+  // Entidades extraídas
+  extractedEntities Json     @default("{}")
+  
+  // Resultado
+  botResponse       String?
+  actionExecuted    String?  // 'create_reservation', 'cancel', 'query', etc.
+  success           Boolean  @default(true)
+  errorType         String?  // 'not_understood', 'validation_error', 'system_error'
+  
+  // Contexto
+  conversationState String?
+  previousIntention String?
+  
+  // Métricas de rendimiento
+  responseTimeMs    Int?
+  
+  createdAt         DateTime @default(now())
+  
+  @@index([userId])
+  @@index([companyId])
+  @@index([detectedIntention])
+  @@index([success])
+  @@index([createdAt])
+  @@index([errorType])
+  @@map("conversation_logs")
+}
+
+// ============================================
+// PREFERENCIAS DE USUARIO (MEMORIA A LARGO PLAZO)
+// ============================================
+
+model UserPreference {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  companyId   String
+  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  
+  // Preferencias aprendidas
+  preferredService  String?  // Servicio más usado
+  preferredTime     String?  // Hora preferida (ej: "19:00")
+  preferredDay      String?  // Día preferido (ej: "saturday")
+  defaultGuests     Int?     // Número usual de personas
+  defaultAddress    String?  // Dirección de entrega guardada
+  
+  // Datos personales confirmados
+  confirmedName     String?
+  confirmedPhone    String?
+  confirmedEmail    String?
+  
+  // Historial resumido
+  totalReservations Int      @default(0)
+  totalOrders       Int      @default(0)
+  lastVisitDate     DateTime?
+  favoriteProducts  Json     @default("[]") // IDs de productos más pedidos
+  
+  // Notas del sistema
+  notes             String?
+  
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  @@unique([userId, companyId])
+  @@index([userId])
+  @@index([companyId])
+  @@map("user_preferences")
+}
+

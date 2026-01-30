@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
 import { WompiService, WompiCredentials } from './wompi.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
@@ -137,6 +137,9 @@ export class PaymentsService {
     }
   }
 
+  // Máximo tiempo permitido para webhooks (5 minutos) - protección contra replay attacks
+  private readonly WEBHOOK_MAX_AGE_MS = 5 * 60 * 1000;
+
   async handleWebhook(
     signature: string,
     timestamp: string,
@@ -145,6 +148,22 @@ export class PaymentsService {
     this.logger.log('=== PROCESANDO WEBHOOK ===');
     this.logger.log('Signature recibida:', signature);
     this.logger.log('Timestamp recibido:', timestamp);
+    
+    // Protección contra replay attacks - verificar que el timestamp no sea muy antiguo
+    const isProduction = process.env.NODE_ENV === 'production';
+    const webhookTimestamp = payload?.timestamp ? Number(payload.timestamp) * 1000 : Date.now();
+    const now = Date.now();
+    const age = now - webhookTimestamp;
+    
+    if (age > this.WEBHOOK_MAX_AGE_MS) {
+      this.logger.error(`❌ Webhook timestamp too old: ${age}ms (max: ${this.WEBHOOK_MAX_AGE_MS}ms)`);
+      if (isProduction) {
+        throw new UnauthorizedException('Webhook timestamp too old - possible replay attack');
+      } else {
+        this.logger.warn('⚠️ Timestamp antiguo - permitido solo en modo desarrollo');
+      }
+    }
+    
     this.logger.log('Payload recibido:', JSON.stringify(payload, null, 2));
     
     const { event, data } = payload;
@@ -177,17 +196,36 @@ export class PaymentsService {
 
       this.logger.log(`✅ Pago encontrado: ${payment.id}`);
 
-      // Verificar firma (simplificado - saltar en desarrollo)
+      // VALIDACIÓN DE FIRMA OBLIGATORIA EN PRODUCCIÓN
+      const isProduction = process.env.NODE_ENV === 'production';
+      const skipSignatureValidation = process.env.SKIP_WOMPI_SIGNATURE_VALIDATION === 'true';
+      
       if (payment.company.wompiEventsSecret) {
-        this.logger.log('🔐 Verificando firma...');
+        this.logger.log('🔐 Verificando firma del webhook...');
         const isValid = this.wompi.verifySignature(
           payment.company.wompiEventsSecret,
           signature,
           timestamp,
           payload,
         );
+        
         if (!isValid) {
-          this.logger.warn('⚠️ Firma inválida - continuando en modo desarrollo');
+          if (isProduction && !skipSignatureValidation) {
+            this.logger.error('❌ FIRMA INVÁLIDA - Webhook rechazado en producción');
+            throw new UnauthorizedException('Invalid webhook signature');
+          } else {
+            this.logger.warn('⚠️ Firma inválida - permitido solo en modo desarrollo');
+          }
+        } else {
+          this.logger.log('✅ Firma del webhook verificada correctamente');
+        }
+      } else {
+        // No hay eventsSecret configurado
+        if (isProduction && !skipSignatureValidation) {
+          this.logger.error('❌ WOMPI_EVENTS_SECRET no configurado - Webhook rechazado en producción');
+          throw new UnauthorizedException('Wompi events secret not configured');
+        } else {
+          this.logger.warn('⚠️ wompiEventsSecret no configurado - permitido solo en modo desarrollo');
         }
       }
 

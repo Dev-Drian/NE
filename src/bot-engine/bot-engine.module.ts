@@ -12,6 +12,10 @@ import { GreetingHandler } from './handlers/greeting.handler';
 import { CancelHandler } from './handlers/cancel.handler';
 import { QueryHandler } from './handlers/query.handler';
 import { ReservationHandler } from './handlers/reservation.handler';
+import { HistoryHandler } from './handlers/history.handler';
+import { ProductQueryHandler } from './handlers/product-query.handler';
+import { DeliveryQueryHandler } from './handlers/delivery-query.handler';
+import { FarewellHandler } from './handlers/farewell.handler';
 import { MetricsService } from './utils/metrics.service';
 import { IntentionsModule } from '../intentions/intentions.module';
 import { CompaniesModule } from '../companies/companies.module';
@@ -33,9 +37,23 @@ import { ReservationFlowService } from './handlers/reservation/reservation-flow.
 import { PromptBuilderService } from './layers/prompt-builder.service';
 import { ResourceValidatorService } from './services/resource-validator.service';
 import { StateMachineService } from './services/state-machine.service';
+import { ConversationLoggingService } from './services/conversation-logging.service';
+import { UserPreferencesService } from './services/user-preferences.service';
+import { ReferenceResolverService } from './services/reference-resolver.service';
+import { IntentionOrchestratorService } from './services/intention-orchestrator.service';
+import { PrismaModule } from '../prisma/prisma.module';
+import { ProductsModule } from '../products/products.module';
+// ===== SERVICIOS NLU AVANZADOS =====
+import { SpellCheckerService } from './utils/spell-checker.service';
+import { LearningService } from './services/learning.service';
+import { SynonymService } from './utils/synonym.service';
+import { DetectionExplainerService } from './utils/detection-explainer.service';
+import { EntityNormalizerService } from './utils/entity-normalizer.service';
+import { NluTestController } from './nlu-test.controller';
 
 @Module({
   imports: [
+    PrismaModule,
     IntentionsModule,
     CompaniesModule,
     ConversationsModule,
@@ -45,7 +63,9 @@ import { StateMachineService } from './services/state-machine.service';
     UsersModule,
     PaymentsModule,
     KeywordsModule,
+    ProductsModule,
   ],
+  controllers: [NluTestController],
   providers: [
     BotEngineService,
     Layer1KeywordsService,
@@ -56,10 +76,15 @@ import { StateMachineService } from './services/state-machine.service';
     DateUtilsService,
     KeywordDetectorService,
     CircuitBreakerService,
+    // Handlers de intención
     GreetingHandler,
     CancelHandler,
     QueryHandler,
     ReservationHandler,
+    HistoryHandler,
+    ProductQueryHandler,
+    DeliveryQueryHandler,
+    FarewellHandler,
     MetricsService,
     // Nuevos servicios de contexto
     ContextCompressorService,
@@ -79,7 +104,37 @@ import { StateMachineService } from './services/state-machine.service';
     ResourceValidatorService,
     // State Machine (fuente única de verdad)
     StateMachineService,
+    // ===== SERVICIOS AVANZADOS (Sistema ChatGPT-like) =====
+    // Logging y métricas de conversaciones
+    ConversationLoggingService,
+    // Preferencias y memoria de usuario
+    UserPreferencesService,
+    // Resolución de referencias contextuales
+    ReferenceResolverService,
+    // Orquestador de intenciones (simplifica bot-engine.service.ts)
+    IntentionOrchestratorService,
+    // ===== NLU AVANZADO =====
+    // Corrección ortográfica automática (WhatsApp español informal)
+    SpellCheckerService,
+    // Aprendizaje automático de patrones
+    LearningService,
+    // Sinónimos dinámicos
+    SynonymService,
+    // Explicador de detecciones (debugging/auditoría)
+    DetectionExplainerService,
+    // Normalizador de entidades (fechas, horas, cantidades)
+    EntityNormalizerService,
   ],
-  exports: [BotEngineService, StateMachineService],
+  exports: [
+    BotEngineService, 
+    StateMachineService, 
+    ConversationLoggingService, 
+    UserPreferencesService, 
+    IntentionOrchestratorService,
+    // Exportar para uso externo
+    SpellCheckerService,
+    EntityNormalizerService,
+    SynonymService,
+  ],
 })
 export class BotEngineModule {}

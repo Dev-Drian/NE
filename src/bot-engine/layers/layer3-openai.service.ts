@@ -386,27 +386,70 @@ ${reservationsText.join('\n')}
     }
   }
 
+  // Timeout configurable para llamadas a AI (default: 10 segundos)
+  private readonly AI_TIMEOUT_MS = parseInt(process.env.AI_TIMEOUT_MS || '10000', 10);
+
   private async callOpenAI(prompt: string): Promise<string | null> {
     if (!this.openai) return null;
     
-    const completion = await this.openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.3,
-      response_format: { type: 'json_object' },
-    });
+    // Crear AbortController para timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => {
+      controller.abort();
+      this.logger.warn(`OpenAI call aborted after ${this.AI_TIMEOUT_MS}ms timeout`);
+    }, this.AI_TIMEOUT_MS);
 
-    return completion.choices[0]?.message?.content || null;
+    try {
+      const completion = await this.openai.chat.completions.create(
+        {
+          model: 'gpt-4o-mini',
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.3,
+          response_format: { type: 'json_object' },
+        },
+        { signal: controller.signal }
+      );
+
+      return completion.choices[0]?.message?.content || null;
+    } catch (error) {
+      if (error.name === 'AbortError' || error.message?.includes('aborted')) {
+        throw new Error(`OpenAI request timed out after ${this.AI_TIMEOUT_MS}ms`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
 
   private async callGemini(prompt: string): Promise<string | null> {
     if (!this.gemini) return null;
     
-    const model = this.gemini.getGenerativeModel({ model: 'gemini-3-pro-preview' });
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    
-    return response.text() || null;
+    // Usar Promise.race para implementar timeout con Gemini
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => {
+        reject(new Error(`Gemini request timed out after ${this.AI_TIMEOUT_MS}ms`));
+      }, this.AI_TIMEOUT_MS);
+    });
+
+    try {
+      const model = this.gemini.getGenerativeModel({ 
+        model: 'gemini-3-pro-preview',
+        generationConfig: {
+          // Gemini también soporta timeout en config
+        }
+      });
+      
+      const resultPromise = model.generateContent(prompt);
+      const result = await Promise.race([resultPromise, timeoutPromise]);
+      const response = await result.response;
+      
+      return response.text() || null;
+    } catch (error) {
+      if (error.message?.includes('timed out')) {
+        this.logger.warn(`Gemini call timed out after ${this.AI_TIMEOUT_MS}ms`);
+      }
+      throw error;
+    }
   }
 
   /**

@@ -1,11 +1,15 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class ProductsService {
   private readonly logger = new Logger(ProductsService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private eventEmitter: EventEmitter2,
+  ) {}
 
   /**
    * Obtener todos los productos de una empresa (activos y disponibles)
@@ -232,9 +236,17 @@ export class ProductsService {
     keywords?: string[];
     imageUrl?: string;
   }) {
-    return this.prisma.product.create({
+    const product = await this.prisma.product.create({
       data,
     });
+    
+    // Emitir evento para invalidar cache
+    this.eventEmitter.emit('product.created', {
+      productId: product.id,
+      companyId: product.companyId,
+    });
+    
+    return product;
   }
 
   /**
@@ -251,19 +263,35 @@ export class ProductsService {
     keywords: string[];
     imageUrl: string;
   }>) {
-    return this.prisma.product.update({
+    const product = await this.prisma.product.update({
       where: { id: productId },
       data,
     });
+    
+    // Emitir evento para invalidar cache
+    this.eventEmitter.emit('product.updated', {
+      productId: product.id,
+      companyId: product.companyId,
+    });
+    
+    return product;
   }
 
   /**
    * Eliminar un producto (soft delete)
    */
   async delete(productId: string) {
-    return this.prisma.product.update({
+    const product = await this.prisma.product.update({
       where: { id: productId },
       data: { active: false, available: false },
     });
+    
+    // Emitir evento para invalidar cache
+    this.eventEmitter.emit('product.deleted', {
+      productId: product.id,
+      companyId: product.companyId,
+    });
+    
+    return product;
   }
 }
