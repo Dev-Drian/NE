@@ -8,167 +8,171 @@ datasource db {
 }
 
 model Company {
-  id          String   @id @default(uuid())
+  id          String  @id @default(uuid())
   name        String
-  type        String   // 'restaurant', 'spa', 'salon', 'clinic'
+  type        String // 'restaurant', 'spa', 'salon', 'clinic'
   description String?
   phone       String?
-  active      Boolean  @default(true)
-  
-  // Configuración JSON (solo settings estáticos: horarios, servicios config, wompi)
-  config      Json     @default("{}")
-  // Ejemplo: { "hours": {"monday": "09:00-18:00"}, "services": {...} }
-  
+  active      Boolean @default(true)
+
+  // Configuración JSON (solo settings estáticos: horarios, personalidad)
+  config Json @default("{}")
+  // Ejemplo: { "hours": {"monday": "09:00-18:00"}, "personality": {...} }
+
   // Configuración de pagos
-  requiresPayment     Boolean @default(false)
-  paymentPercentage   Int     @default(100) // 50 = 50%, 100 = 100%
-  wompiPublicKey      String?
-  wompiPrivateKey     String?
-  wompiEventsSecret   String?
-  wompiEnabled        Boolean @default(false)
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  
-  intentions   Intention[]
-  reservations Reservation[]
-  payments     Payment[]
-  serviceKeywords ServiceKeyword[]
-  products     Product[]
-  resources    Resource[]
-  promotions   Promotion[]
+  requiresPayment   Boolean @default(false)
+  paymentPercentage Int     @default(100) // 50 = 50%, 100 = 100%
+  wompiPublicKey    String?
+  wompiPrivateKey   String?
+  wompiEventsSecret String?
+  wompiEnabled      Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  intentions       Intention[]
+  reservations     Reservation[]
+  payments         Payment[]
+  serviceKeywords  ServiceKeyword[]
+  products         Product[]
+  resources        Resource[]
+  promotions       Promotion[]
   conversationLogs ConversationLog[]
   userPreferences  UserPreference[]
-  
+  services         Service[] // ← NUEVA RELACIÓN: Servicios de la empresa
+
   @@map("companies")
 }
 
 model Intention {
-  id          String   @id @default(uuid())
+  id          String  @id @default(uuid())
   companyId   String
-  name        String   // 'reservar', 'cancelar', 'consultar'
+  name        String // 'reservar', 'cancelar', 'consultar'
   description String?
-  priority    Int      @default(1)
-  active      Boolean  @default(true)
-  
-  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  patterns    IntentionPattern[]
-  examples    IntentionExample[]
-  
+  priority    Int     @default(1)
+  active      Boolean @default(true)
+
+  company  Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  patterns IntentionPattern[]
+  examples IntentionExample[]
+
   @@map("intentions")
 }
 
 model IntentionPattern {
-  id          String   @id @default(uuid())
+  id          String @id @default(uuid())
   intentionId String
-  type        String   // 'keyword', 'regex'
-  value       String   // palabra o expresión regular
-  weight      Float    @default(0.7)
-  
-  intention   Intention @relation(fields: [intentionId], references: [id], onDelete: Cascade)
-  
+  type        String // 'keyword', 'regex'
+  value       String // palabra o expresión regular
+  weight      Float  @default(0.7)
+
+  intention Intention @relation(fields: [intentionId], references: [id], onDelete: Cascade)
+
   @@map("intention_patterns")
 }
 
 model IntentionExample {
-  id          String   @id @default(uuid())
+  id          String @id @default(uuid())
   intentionId String
-  text        String   // "quiero una mesa para 4"
-  
-  intention   Intention @relation(fields: [intentionId], references: [id], onDelete: Cascade)
-  
+  text        String // "quiero una mesa para 4"
+
+  intention Intention @relation(fields: [intentionId], references: [id], onDelete: Cascade)
+
   @@map("intention_examples")
 }
 
 model Reservation {
-  id          String   @id @default(uuid())
-  companyId   String
-  userId      String
-  
+  id        String @id @default(uuid())
+  companyId String
+  userId    String
+
   // Datos de la reserva
-  service     String?
-  date        String   // YYYY-MM-DD
-  time        String   // HH:MM
-  guests      Int      @default(1)
-  
+  service   String? // Key del servicio (legacy, para compatibilidad)
+  serviceId String? // ← NUEVO: FK a la tabla Service
+  date      String // YYYY-MM-DD
+  time      String // HH:MM
+  guests    Int     @default(1)
+
   // Contacto
-  phone       String?
-  email       String?
-  name        String?
-  
+  phone String?
+  email String?
+  name  String?
+
   // Estado
-  status      String   @default("pending") // pending, confirmed, cancelled
-  
+  status String @default("pending") // pending, confirmed, cancelled
+
   // Metadata adicional
-  notes       String?
-  metadata    Json     @default("{}")
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  
-  company     Company  @relation(fields: [companyId], references: [id])
-  items       ReservationItem[]
-  
+  notes    String?
+  metadata Json    @default("{}")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company    Company           @relation(fields: [companyId], references: [id])
+  serviceRef Service?          @relation(fields: [serviceId], references: [id])
+  items      ReservationItem[]
+
+  @@index([serviceId])
   @@map("reservations")
 }
 
 model User {
-  id          String   @id @default(uuid())
-  phone       String   @unique
-  name        String?
-  email       String?
-  metadata    Json     @default("{}")
-  createdAt   DateTime @default(now())
-  
+  id        String   @id @default(uuid())
+  phone     String   @unique
+  name      String?
+  email     String?
+  metadata  Json     @default("{}")
+  createdAt DateTime @default(now())
+
   conversations Conversation[]
   preferences   UserPreference[]
-  
+
   @@map("users")
 }
 
 model Conversation {
-  id                String   @id @default(uuid())
-  userId            String
-  companyId         String
-  
+  id        String @id @default(uuid())
+  userId    String
+  companyId String
+
   // Estado de la conversación
-  state             String   @default("greeting") // greeting, collecting, confirming, completed
-  context           Json     @default("{}")
-  
+  state   String @default("greeting") // greeting, collecting, confirming, completed
+  context Json   @default("{}")
+
   // Estado de pagos
-  paymentRequired   Boolean  @default(false)
-  paymentCompleted  Boolean  @default(false)
-  
-  lastMessageAt     DateTime @default(now())
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-  
-  user              User     @relation(fields: [userId], references: [id])
-  payments          Payment[]
-  
+  paymentRequired  Boolean @default(false)
+  paymentCompleted Boolean @default(false)
+
+  lastMessageAt DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id])
+  payments Payment[]
+
   @@index([userId])
   @@index([companyId])
   @@map("conversations")
 }
 
 model Payment {
-  id                String   @id @default(uuid())
-  companyId         String
-  company           Company  @relation(fields: [companyId], references: [id])
-  conversationId    String
-  conversation      Conversation @relation(fields: [conversationId], references: [id])
-  
-  amount            Float
-  currency          String   @default("COP")
-  status            PaymentStatus @default(PENDING)
-  
-  wompiTransactionId String?  @unique
-  wompiReference    String?  @unique
-  paymentUrl        String?
-  
-  paidAt            DateTime?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  id             String       @id @default(uuid())
+  companyId      String
+  company        Company      @relation(fields: [companyId], references: [id])
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+
+  amount   Float
+  currency String        @default("COP")
+  status   PaymentStatus @default(PENDING)
+
+  wompiTransactionId String? @unique
+  wompiReference     String? @unique
+  paymentUrl         String?
+
+  paidAt    DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 
   @@index([conversationId])
   @@index([companyId])
@@ -185,40 +189,40 @@ enum PaymentStatus {
 }
 
 model MessageTemplateConfig {
-  id          String   @id @default(uuid())
-  companyType String   @unique // 'restaurant', 'spa', 'salon', 'clinic'
-  active      Boolean  @default(true)
-  
+  id          String  @id @default(uuid())
+  companyType String  @unique // 'restaurant', 'spa', 'salon', 'clinic'
+  active      Boolean @default(true)
+
   // Templates de mensajes
-  templates   Json     // { greeting, reservationRequest, reservationConfirm, reservationCancel, reservationQuery, missingFields, error }
-  
+  templates Json // { greeting, reservationRequest, reservationConfirm, reservationCancel, reservationQuery, missingFields, error }
+
   // Terminología específica del tipo
-  terminology Json     // { reservation, person, people, service }
-  
+  terminology Json // { reservation, person, people, service }
+
   // Configuración de reservas
   reservationSettings Json // { requireGuests, defaultGuests }
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   @@map("message_template_configs")
 }
 
 model ServiceKeyword {
-  id          String   @id @default(uuid())
-  companyId   String?  // null = global, o específico de empresa
-  serviceKey  String   // "domicilio", "mesa", "cita"
-  keyword     String   // "pedir a domicilio", "delivery", etc.
-  type        String   @default("contains") // "exact", "contains", "regex"
-  weight      Float    @default(1.0) // 0.0-1.0 (confianza)
-  language    String   @default("es")
-  active      Boolean  @default(true)
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  
-  company     Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  
+  id         String  @id @default(uuid())
+  companyId  String? // null = global, o específico de empresa
+  serviceKey String // "domicilio", "mesa", "cita"
+  keyword    String // "pedir a domicilio", "delivery", etc.
+  type       String  @default("contains") // "exact", "contains", "regex"
+  weight     Float   @default(1.0) // 0.0-1.0 (confianza)
+  language   String  @default("es")
+  active     Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   @@index([serviceKey])
   @@index([companyId])
   @@index([keyword])
@@ -230,18 +234,18 @@ model ServiceKeyword {
 // KEYWORDS DEL SISTEMA (saludos, despedidas, confirmaciones, etc.)
 // ============================================
 model SystemKeyword {
-  id          String   @id @default(uuid())
-  category    String   // "greeting", "farewell", "confirmation", "negation", "products", "price", "history", "payment", "cancel", "availability", "details", "delivery", "para_llevar"
-  keyword     String   // El keyword o frase
-  type        String   @default("contains") // "exact", "contains", "startsWith", "endsWith", "regex"
-  weight      Float    @default(1.0) // Peso para priorización (0.0-1.0)
-  language    String   @default("es")
-  active      Boolean  @default(true)
-  description String?  // Descripción opcional del keyword
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  
+  id          String  @id @default(uuid())
+  category    String // "greeting", "farewell", "confirmation", "negation", "products", "price", "history", "payment", "cancel", "availability", "details", "delivery", "para_llevar"
+  keyword     String // El keyword o frase
+  type        String  @default("contains") // "exact", "contains", "startsWith", "endsWith", "regex"
+  weight      Float   @default(1.0) // Peso para priorización (0.0-1.0)
+  language    String  @default("es")
+  active      Boolean @default(true)
+  description String? // Descripción opcional del keyword
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   @@unique([category, keyword, language])
   @@index([category])
   @@index([active])
@@ -254,44 +258,44 @@ model SystemKeyword {
 // ============================================
 
 model Product {
-  id          String   @id @default(uuid())
-  companyId   String
-  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  
+  id        String  @id @default(uuid())
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   name        String
   description String?
   price       Float
   category    String
-  
+
   // Para servicios con duración (clínica, spa)
-  duration    Int?     // minutos
-  
+  duration Int? // minutos
+
   // Control de stock (para productos físicos)
-  hasStock    Boolean  @default(false) // true = tiene stock físico
-  stock       Int      @default(0)
-  minStock    Int      @default(5)     // Alerta de stock bajo
-  
+  hasStock Boolean @default(false) // true = tiene stock físico
+  stock    Int     @default(0)
+  minStock Int     @default(5) // Alerta de stock bajo
+
   // Disponibilidad
-  available   Boolean  @default(true)
-  active      Boolean  @default(true)
-  
+  available Boolean @default(true)
+  active    Boolean @default(true)
+
   // Para búsquedas y matching
-  keywords    String[] // ["limpieza", "dental", "dientes"]
-  
+  keywords String[] // ["limpieza", "dental", "dientes"]
+
   // Imagen (futuro)
-  imageUrl    String?
-  
+  imageUrl String?
+
   // Metadata adicional
-  metadata    Json     @default("{}")
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  
+  metadata Json @default("{}")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   // Relaciones
   reservationItems ReservationItem[]
   stockMovements   StockMovement[]
   promotions       ProductPromotion[]
-  
+
   @@index([companyId, category])
   @@index([companyId, available, active])
   @@index([companyId, hasStock])
@@ -299,66 +303,66 @@ model Product {
 }
 
 model Resource {
-  id          String   @id @default(uuid())
-  companyId   String
-  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  
-  name        String
-  type        String   // 'mesa', 'consultorio', 'sala', 'silla'
-  capacity    Int      // Capacidad de personas
-  
+  id        String  @id @default(uuid())
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  name     String
+  type     String // 'mesa', 'consultorio', 'sala', 'silla'
+  capacity Int // Capacidad de personas
+
   // Disponibilidad
-  available   Boolean  @default(true)
-  active      Boolean  @default(true)
-  
+  available Boolean @default(true)
+  active    Boolean @default(true)
+
   // Metadata adicional
-  metadata    Json     @default("{}")
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  
+  metadata Json @default("{}")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   @@index([companyId, type, available])
   @@index([companyId, active])
   @@map("resources")
 }
 
 model ReservationItem {
-  id            String   @id @default(uuid())
+  id            String      @id @default(uuid())
   reservationId String
   reservation   Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
-  
-  productId     String
-  product       Product  @relation(fields: [productId], references: [id])
-  
-  quantity      Int      @default(1)
-  price         Float    // Precio al momento de la reserva
-  
-  createdAt     DateTime @default(now())
-  
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+
+  quantity Int   @default(1)
+  price    Float // Precio al momento de la reserva
+
+  createdAt DateTime @default(now())
+
   @@index([reservationId])
   @@index([productId])
   @@map("reservation_items")
 }
 
 model StockMovement {
-  id            String   @id @default(uuid())
-  productId     String
-  product       Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  
-  type          String   // 'in', 'out', 'adjustment'
+  id        String  @id @default(uuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  type          String // 'in', 'out', 'adjustment'
   quantity      Int
   previousStock Int
   newStock      Int
-  
-  reason        String?  // 'sale', 'restock', 'damaged', 'expired', etc.
-  notes         String?
-  
+
+  reason String? // 'sale', 'restock', 'damaged', 'expired', etc.
+  notes  String?
+
   // Auditoría
   userId        String?
   reservationId String?
-  
-  createdAt     DateTime @default(now())
-  
+
+  createdAt DateTime @default(now())
+
   @@index([productId, createdAt])
   @@index([type])
   @@map("stock_movements")
@@ -369,39 +373,39 @@ model StockMovement {
 // ============================================
 
 model Promotion {
-  id          String   @id @default(uuid())
-  companyId   String
-  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  
+  id        String  @id @default(uuid())
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   name        String
   description String?
-  type        String   // 'percentage', 'fixed', 'bogo', '2x1'
-  
+  type        String // 'percentage', 'fixed', 'bogo', '2x1'
+
   // Descuento
-  discountPercentage Float?  // 10 = 10%
-  discountAmount     Float?  // $5000
-  
+  discountPercentage Float? // 10 = 10%
+  discountAmount     Float? // $5000
+
   // Validez
-  startDate   DateTime
-  endDate     DateTime
-  active      Boolean  @default(true)
-  
+  startDate DateTime
+  endDate   DateTime
+  active    Boolean  @default(true)
+
   // Condiciones
-  minPurchase Float?   // Compra mínima
-  maxUses     Int?     // Máximo de usos
-  currentUses Int      @default(0)
-  
+  minPurchase Float? // Compra mínima
+  maxUses     Int? // Máximo de usos
+  currentUses Int    @default(0)
+
   // Código de promoción
-  code        String?  @unique
-  
+  code String? @unique
+
   // Días válidos
-  validDays   String[] // ["monday", "tuesday"]
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  
-  products    ProductPromotion[]
-  
+  validDays String[] // ["monday", "tuesday"]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  products ProductPromotion[]
+
   @@index([companyId, active])
   @@index([code])
   @@index([startDate, endDate])
@@ -409,15 +413,15 @@ model Promotion {
 }
 
 model ProductPromotion {
-  id          String   @id @default(uuid())
+  id          String    @id @default(uuid())
   promotionId String
   promotion   Promotion @relation(fields: [promotionId], references: [id], onDelete: Cascade)
-  
-  productId   String
-  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  
-  createdAt   DateTime @default(now())
-  
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
   @@unique([promotionId, productId])
   @@index([promotionId])
   @@index([productId])
@@ -429,40 +433,40 @@ model ProductPromotion {
 // ============================================
 
 model ConversationLog {
-  id              String   @id @default(uuid())
-  userId          String
-  companyId       String
-  company         Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  conversationId  String?
-  
+  id             String  @id @default(uuid())
+  userId         String
+  companyId      String
+  company        Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  conversationId String?
+
   // Mensaje original
   userMessage       String
   normalizedMessage String?
-  
+
   // Detección de intención
   detectedIntention String?
-  confidence        Float    @default(0)
-  detectionLayer    String?  // 'layer1', 'layer2', 'layer3', 'keyword'
-  matchedPatterns   Json     @default("[]")
-  
+  confidence        Float   @default(0)
+  detectionLayer    String? // 'layer1', 'layer2', 'layer3', 'keyword'
+  matchedPatterns   Json    @default("[]")
+
   // Entidades extraídas
-  extractedEntities Json     @default("{}")
-  
+  extractedEntities Json @default("{}")
+
   // Resultado
-  botResponse       String?
-  actionExecuted    String?  // 'create_reservation', 'cancel', 'query', etc.
-  success           Boolean  @default(true)
-  errorType         String?  // 'not_understood', 'validation_error', 'system_error'
-  
+  botResponse    String?
+  actionExecuted String? // 'create_reservation', 'cancel', 'query', etc.
+  success        Boolean @default(true)
+  errorType      String? // 'not_understood', 'validation_error', 'system_error'
+
   // Contexto
   conversationState String?
   previousIntention String?
-  
+
   // Métricas de rendimiento
-  responseTimeMs    Int?
-  
-  createdAt         DateTime @default(now())
-  
+  responseTimeMs Int?
+
+  createdAt DateTime @default(now())
+
   @@index([userId])
   @@index([companyId])
   @@index([detectedIntention])
@@ -477,39 +481,87 @@ model ConversationLog {
 // ============================================
 
 model UserPreference {
-  id          String   @id @default(uuid())
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  companyId   String
-  company     Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  
+  id        String  @id @default(uuid())
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
   // Preferencias aprendidas
-  preferredService  String?  // Servicio más usado
-  preferredTime     String?  // Hora preferida (ej: "19:00")
-  preferredDay      String?  // Día preferido (ej: "saturday")
-  defaultGuests     Int?     // Número usual de personas
-  defaultAddress    String?  // Dirección de entrega guardada
-  
+  preferredService String? // Servicio más usado
+  preferredTime    String? // Hora preferida (ej: "19:00")
+  preferredDay     String? // Día preferido (ej: "saturday")
+  defaultGuests    Int? // Número usual de personas
+  defaultAddress   String? // Dirección de entrega guardada
+
   // Datos personales confirmados
-  confirmedName     String?
-  confirmedPhone    String?
-  confirmedEmail    String?
-  
+  confirmedName  String?
+  confirmedPhone String?
+  confirmedEmail String?
+
   // Historial resumido
-  totalReservations Int      @default(0)
-  totalOrders       Int      @default(0)
+  totalReservations Int       @default(0)
+  totalOrders       Int       @default(0)
   lastVisitDate     DateTime?
-  favoriteProducts  Json     @default("[]") // IDs de productos más pedidos
-  
+  favoriteProducts  Json      @default("[]") // IDs de productos más pedidos
+
   // Notas del sistema
-  notes             String?
-  
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-  
+  notes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   @@unique([userId, companyId])
   @@index([userId])
   @@index([companyId])
   @@map("user_preferences")
 }
 
+// ============================================
+// SERVICIOS DE LA EMPRESA (mesa, domicilio, limpieza dental, etc.)
+// ============================================
+
+model Service {
+  id        String  @id @default(uuid())
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  // Identificación
+  key         String // 'mesa', 'domicilio', 'limpieza_dental'
+  name        String // 'Reserva de Mesa', 'Domicilio', 'Limpieza Dental'
+  description String?
+
+  // Configuración del servicio
+  requiredFields String[] // ['fecha', 'hora', 'personas'] o ['direccion', 'telefono', 'productos']
+  optionalFields String[] // ['notas', 'preferencias']
+
+  // Qué categorías de productos se pueden pedir con este servicio
+  allowedProductCategories String[] // ['food', 'drink', 'dessert'] - vacío para servicios sin productos
+
+  // Configuración específica (JSON flexible)
+  config Json? // { minGuests: 1, maxGuests: 20, deliveryFee: 5000, duration: 45, etc }
+
+  // Estados
+  active    Boolean @default(true)
+  available Boolean @default(true)
+
+  // Precio base del servicio (opcional, para clínicas/spas)
+  basePrice Float?
+
+  // Keywords para detección automática del servicio
+  keywords String[] // ['mesa', 'reserva', 'cena', 'almuerzo']
+
+  // Orden de visualización
+  displayOrder Int @default(0)
+
+  // Relaciones
+  reservations Reservation[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([companyId, key])
+  @@index([companyId, active])
+  @@index([companyId, available])
+  @@map("services")
+}

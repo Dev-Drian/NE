@@ -4,6 +4,7 @@ import { AIContext } from '../context/context-builder.service';
 import { IntentionsService } from '../../intentions/intentions.service';
 import { ServiceConfigResolverService } from '../services/service-config-resolver.service';
 import { ServiceValidatorService } from '../services/service-validator.service';
+import { ProductsService } from '../../products/products.service';
 
 export interface DateReferences {
   hoy: string;
@@ -21,6 +22,7 @@ export class PromptBuilderService {
     private intentionsService: IntentionsService,
     private serviceConfigResolver: ServiceConfigResolverService,
     private serviceValidator: ServiceValidatorService,
+    private productsService: ProductsService,
   ) {}
   buildServicesInfo(company: Company): { servicesInfo: string; hasMultipleServices: boolean } {
     const config = company.config as any;
@@ -80,7 +82,7 @@ export class PromptBuilderService {
   }): Promise<{ prompt: string; hasMultipleServices: boolean }> {
     const { company, message, dateRefs, conversationContextText, currentStateInfo, contextualInfo, serviceKey } = params;
 
-    const { servicesInfo, hasMultipleServices } = this.buildServicesInfo(company);
+    const { servicesInfo, hasMultipleServices } = await this.buildServicesInfo(company);
     const productsInfo = this.buildProductsInfo(company);
 
     // 1. Obtener intenciones dinámicas de la BD
@@ -96,7 +98,7 @@ export class PromptBuilderService {
     let fieldsToExtract: string[] = ['date', 'time', 'phone', 'name', 'guests'];
     let fieldsDescription = `- date: YYYY-MM-DD o null (NO asumas hoy si no dice fecha)
 - time: HH:MM o null
-- phone: string o null (7-10 dígitos)
+- phone: string o null (7-15 dígitos, puede incluir código de país)
 - name: string o null
 - guests: número o null (solo si el usuario lo menciona)`;
 
@@ -112,7 +114,7 @@ export class PromptBuilderService {
       const fieldDescriptions: Record<string, string> = {
         date: 'date: YYYY-MM-DD o null (NO asumas hoy si no dice fecha)',
         time: 'time: HH:MM o null',
-        phone: 'phone: string o null (7-10 dígitos)',
+        phone: 'phone: string o null (7-15 dígitos, puede incluir código de país)',
         name: 'name: string o null',
         guests: 'guests: número o null (solo si el usuario lo menciona)',
         service: 'service: key_del_servicio o null',
@@ -170,6 +172,10 @@ export class PromptBuilderService {
         return `    "${field}": "tipo apropiado o null"`;
       })
       .join(',\n');
+    
+    // Agregar queryType al schema (siempre disponible)
+    const queryTypeField = '    "queryType": "catalog | availability | price | info | null (usa catalog si piden menú/carta/catálogo completo)"';
+    const finalExtractedDataFields = `${queryTypeField},\n${extractedDataFields}`;
 
     const prompt = `Analiza este mensaje de un cliente y responde SOLO con un JSON válido (sin markdown, sin código, solo JSON):
 
@@ -204,10 +210,17 @@ ${serviceKey ? `\n⚠️ SERVICIO ACTUAL: ${serviceKey}\nCampos requeridos para 
 ${intentionsList}
 
 REGLAS CRÍTICAS PARA DETECTAR INTENCIÓN:
-- "consultar": El usuario pregunta información (horarios, precios, productos, disponibilidad, servicios) SIN intención de reservar. Palabras clave: "qué", "cuánto", "cuándo", "dónde", "tienen", "hay", "disponible", "horario", "precio", "cuesta", "vale"
+- "consultar": El usuario pregunta información (horarios, precios, productos, disponibilidad, servicios) SIN intención de reservar. Palabras clave: "qué", "cuánto", "cuándo", "dónde", "tienen", "hay", "disponible", "horario", "precio", "cuesta", "vale", "menú", "menu", "carta", "catálogo"
 - "reservar": El usuario quiere crear una reserva/pedido/cita. Palabras clave: "quiero", "necesito", "deseo", "reservar", "pedir", "agendar", "cita", "mesa", "domicilio"
 - "cancelar": El usuario quiere cancelar/anular/eliminar una reserva existente. Palabras clave: "cancelar", "anular", "eliminar", "borrar", "no quiero", "no necesito"
 - "otro": Cualquier otra cosa que no encaje en las anteriores
+
+⚠️ REGLA CRÍTICA PARA CONSULTAS DE CATÁLOGO:
+Si el usuario dice "menú", "menu", "carta", "catálogo", "qué tienen", "qué ofrecen", "qué hay", "dame el menú", "me regalas el menú", "muéstrame todo":
+- Intención: "consultar"
+- extractedData.queryType: "catalog" (OBLIGATORIO para consultas de catálogo completo)
+- missingFields: [] (VACÍO - NO pidas "productos" porque quiere ver TODOS)
+- suggestedReply: genera una respuesta que indique que mostrarás el catálogo/menú completo
 
 ${intentions.length > 0 ? `\nEjemplos de intenciones de esta empresa:\n${intentions.map(i => `- ${i.name}: ${i.description || 'Sin descripción'}`).join('\n')}\n` : ''}
 
@@ -216,7 +229,7 @@ Responde SOLO con este JSON:
   "intention": ${intentionsJson},
   "confidence": 0.0-1.0,
   "extractedData": {
-${extractedDataFields}
+${finalExtractedDataFields}
   },
   "missingFields": ["campo1", "campo2"] o [],
   "suggestedReply": "texto contextualizado y específico"

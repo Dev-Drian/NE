@@ -25,6 +25,10 @@ import { LearningService } from './services/learning.service';
 import { SynonymService } from './utils/synonym.service';
 import { DetectionExplainerService } from './utils/detection-explainer.service';
 import { EntityNormalizerService } from './utils/entity-normalizer.service';
+// ===== SERVICIOS COGNITIVOS (Nivel ChatGPT) =====
+import { ReasoningEngineService } from './services/reasoning-engine.service';
+import { UserMemoryService } from './services/user-memory.service';
+import { SelfCheckService } from './services/self-check.service';
 import { ProcessMessageDto } from './dto/process-message.dto';
 import { DetectionResult } from './dto/detection-result.dto';
 import { CONFIDENCE_THRESHOLDS } from './constants/detection.constants';
@@ -75,6 +79,10 @@ export class BotEngineService {
     private synonymService: SynonymService,
     private detectionExplainer: DetectionExplainerService,
     private entityNormalizer: EntityNormalizerService,
+    // ===== SERVICIOS COGNITIVOS (Nivel ChatGPT) =====
+    private reasoningEngine: ReasoningEngineService,
+    private userMemory: UserMemoryService,
+    private selfCheck: SelfCheckService,
     // Handlers
     private greetingHandler: GreetingHandler,
     private cancelHandler: CancelHandler,
@@ -85,6 +93,7 @@ export class BotEngineService {
 
   async processMessage(dto: ProcessMessageDto): Promise<ProcessMessageResponse> {
     const processingStartTime = Date.now();
+    let earlyReturn: ProcessMessageResponse | null = null; // Para capturar retornos temprano
     
     try {
       // 1. VALIDAR QUE LA EMPRESA EXISTE (CRÍTICO - HACER PRIMERO)
@@ -356,6 +365,10 @@ export class BotEngineService {
           // Construir mensaje de "sin historial" basado en servicios disponibles
           const serviceNames = availableServiceKeys.map(k => getServiceName(k).toLowerCase()).join(' o ');
           const reply = `📋 No tienes registros todavía.\n\n¿Te gustaría agendar ${serviceNames ? 'un(a) ' + serviceNames : 'algo'}? 😊`;
+          const newState = { ...context, stage: 'idle' as const };
+          // Guardar contexto y mensaje antes de retornar
+          await this.contextCache.invalidateContext(contextKey);
+          await this.conversations.saveContext(userId, dto.companyId, newState);
           await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
           return {
             reply,
@@ -451,6 +464,9 @@ export class BotEngineService {
         reply += `📊 **Total:** ${servicesSummary}\n`;
         reply += `\n¿Necesitas algo más? 😊`;
         
+        // Guardar contexto y mensaje antes de retornar
+        await this.contextCache.invalidateContext(contextKey);
+        await this.conversations.saveContext(userId, dto.companyId, context);
         await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
         return {
           reply,
@@ -467,13 +483,15 @@ export class BotEngineService {
     // CRÍTICO: Hacer esto ANTES de continuar con flujos de reserva
     if (isFarewell && !hasConsultaKeywords && !asksForProducts && !asksAboutDelivery && !asksForPrice) {
       const reply = '¡De nada! Fue un placer atenderte. Si necesitas algo más, no dudes en escribirme. 😊';
-      await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
-      // Resetear contexto para nueva conversación
-      await this.conversations.saveContext(userId, dto.companyId, {
-        stage: 'idle',
+      const resetState = {
+        stage: 'idle' as const,
         collectedData: {},
         conversationHistory: [],
-      });
+      };
+      // Guardar contexto y mensaje antes de retornar
+      await this.contextCache.invalidateContext(contextKey);
+      await this.conversations.saveContext(userId, dto.companyId, resetState);
+      await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
       return {
         reply,
         intention: 'otro',
@@ -498,6 +516,9 @@ export class BotEngineService {
         }
         reply += '\n¿Te gustaría hacer un pedido a domicilio? 😊';
         
+        // Guardar contexto y mensaje antes de retornar
+        await this.contextCache.invalidateContext(contextKey);
+        await this.conversations.saveContext(userId, dto.companyId, context);
         await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
         return {
           reply,
@@ -507,6 +528,9 @@ export class BotEngineService {
         };
       } else {
         const reply = 'Lo siento, actualmente no contamos con servicio de domicilio. 😔';
+        // Guardar contexto y mensaje antes de retornar
+        await this.contextCache.invalidateContext(contextKey);
+        await this.conversations.saveContext(userId, dto.companyId, context);
         await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
         return {
           reply,
@@ -555,6 +579,9 @@ export class BotEngineService {
         
         reply += `\n\n¿Te gustaría hacer una reserva? 😊`;
         
+        // Guardar contexto y mensaje antes de retornar
+        await this.contextCache.invalidateContext(contextKey);
+        await this.conversations.saveContext(userId, dto.companyId, context);
         await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
         return {
           reply,
@@ -570,6 +597,8 @@ export class BotEngineService {
     if (asksForProducts) {
       const config = company.config as any;
       const products = config?.products || [];
+      const services = config?.services || {};
+      const serviceKeys = Object.keys(services);
       
       if (products.length > 0) {
         let reply = `📋 **${company.type === 'restaurant' ? 'Nuestro Menú' : 'Nuestros Servicios'}:**\n\n`;
@@ -606,12 +635,44 @@ export class BotEngineService {
           reply += `¿Te gustaría hacer una reserva? 😊`;
         }
         
+        // Guardar contexto y mensaje antes de retornar
+        await this.contextCache.invalidateContext(contextKey);
+        await this.conversations.saveContext(userId, dto.companyId, context);
         await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
         return {
           reply,
           intention: 'consultar',
           confidence: 1.0,
           conversationState: context.stage, // Mantener el estado actual (collecting si está en reserva)
+        };
+      } else if (serviceKeys.length > 0) {
+        // Si no hay productos pero SÍ hay servicios configurados, mostrar los servicios
+        let reply = `📋 **Nuestros Servicios:**\n\n`;
+        
+        for (const [key, serviceConfig] of Object.entries(services)) {
+          const svc = serviceConfig as any;
+          const emoji = key === 'domicilio' ? '🚚' : key === 'mesa' ? '🍽️' : key === 'cita' ? '📅' : '✨';
+          reply += `${emoji} **${svc.name || key}**`;
+          if (svc.description) reply += ` - ${svc.description}`;
+          reply += `\n`;
+        }
+        
+        // Si está en proceso de reserva, recordar que continúe
+        if (isContinuingReservation) {
+          reply += `\n¿Con cuál servicio deseas continuar tu reserva? 😊`;
+        } else {
+          reply += `\n¿Te gustaría hacer una reserva? 😊`;
+        }
+        
+        // Guardar contexto y mensaje antes de retornar
+        await this.contextCache.invalidateContext(contextKey);
+        await this.conversations.saveContext(userId, dto.companyId, context);
+        await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
+        return {
+          reply,
+          intention: 'consultar',
+          confidence: 1.0,
+          conversationState: context.stage, // Mantener el estado actual
         };
       }
     }
@@ -718,6 +779,7 @@ export class BotEngineService {
         if (layer3Detection.suggestedReply) {
           detection.suggestedReply = layer3Detection.suggestedReply;
         }
+        
       } else {
         // SIEMPRE usar OpenAI para mensajes con contexto relevante o baja confianza
         // Verificar si hay contexto relevante (pagos pendientes, reservas, historial)
@@ -750,6 +812,11 @@ export class BotEngineService {
         }
       }
     }
+
+    // ===== ENRIQUECIMIENTO CENTRALIZADO CON ENTITY NORMALIZER =====
+    // Aplicar a TODAS las detecciones, no solo a reservas
+    // Esto captura datos que OpenAI pudo haber perdido (fechas, horas, teléfonos, cantidades, etc.)
+    detection = this.enrichDetectionWithEntityNormalizer(detection, dto.message);
 
     // ===== REGISTRO DE APRENDIZAJE NLU =====
     // Registrar detección exitosa para que el sistema aprenda automáticamente
@@ -1022,6 +1089,7 @@ export class BotEngineService {
           }
         }
         
+        await this.conversations.saveContext(userId, dto.companyId, context);
         await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
         return {
           reply,
@@ -1095,6 +1163,7 @@ export class BotEngineService {
               reply = `⏳ Tu pago está en proceso de confirmación. Por favor espera unos momentos mientras se verifica.\n\nSi ya realizaste el pago, puede tardar hasta 5 minutos en reflejarse en el sistema. Vuelve a escribir "ya pagué" en unos minutos. 😊`;
             }
             
+            await this.conversations.saveContext(userId, dto.companyId, context);
             await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
             return {
               reply,
@@ -1135,6 +1204,7 @@ export class BotEngineService {
             
             reply = `❌ Tu pago ha sido rechazado. Los productos han sido liberados del inventario.\n\nPor favor intenta nuevamente con otro método de pago o contacta a tu banco.\n\n🔗 Intenta nuevamente: ${updatedPayment.paymentUrl}\n\nSi necesitas ayuda, escríbeme. 😊`;
             
+            await this.conversations.saveContext(userId, dto.companyId, context);
             await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
             return {
               reply,
@@ -1146,6 +1216,7 @@ export class BotEngineService {
         } else if (this.keywordDetector.mentionsPayment(dto.message)) {
           // El usuario pregunta por el pago pero no hay pagos pendientes
           reply = `No encontré ningún pago pendiente asociado a tu cuenta. ¿En qué más puedo ayudarte?`;
+          await this.conversations.saveContext(userId, dto.companyId, context);
           await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
           return {
             reply,
@@ -1177,6 +1248,7 @@ export class BotEngineService {
           
           reply = `⚠️ Recuerda que tienes un pago pendiente para confirmar tu ${orderType}.\n\n🔗 Completa el pago aquí: ${pendingPayment.paymentUrl}\n\nCuando hayas pagado, escríbeme "ya pagué" para verificar. 😊`;
           
+          await this.conversations.saveContext(userId, dto.companyId, context);
           await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
           return {
             reply,
@@ -1190,13 +1262,67 @@ export class BotEngineService {
       }
     }
 
-    // 11. Procesar según intención usando handlers
+    // 11. ========== CAPA COGNITIVA: REASONING ENGINE ==========
+    // Razonar ANTES de ejecutar handlers (como ChatGPT "piensa" antes de responder)
+    let reasoningResult;
+    try {
+      // Cargar memoria del usuario para personalización
+      const memory = await this.userMemory.getMemory(userId, dto.companyId);
+      
+      reasoningResult = await this.reasoningEngine.reason({
+        detection,
+        message: dto.message,
+        company,
+        conversationContext: context,
+        userMemory: memory,
+      });
+      
+      this.logger.debug(`🧠 Reasoning: ${reasoningResult.decision} - ${reasoningResult.reasoning.join(', ')}`);
+      
+      // Si el reasoning detecta que necesita clarificación, responder primero
+      if (reasoningResult.decision === 'ask_clarification' && reasoningResult.clarificationNeeded) {
+        await this.contextCache.invalidateContext(contextKey);
+        await this.conversations.saveContext(userId, dto.companyId, context);
+        await this.conversations.addMessage(userId, dto.companyId, 'assistant', reasoningResult.clarificationNeeded);
+        
+        return {
+          reply: reasoningResult.clarificationNeeded,
+          intention: detection.intention,
+          confidence: reasoningResult.confidence,
+          conversationState: context.stage,
+        };
+      }
+      
+      // Si sugiere alternativa, ofrecerla
+      if (reasoningResult.decision === 'suggest_alternative' && reasoningResult.alternativeSuggestion) {
+        await this.contextCache.invalidateContext(contextKey);
+        await this.conversations.saveContext(userId, dto.companyId, context);
+        await this.conversations.addMessage(userId, dto.companyId, 'assistant', reasoningResult.alternativeSuggestion);
+        
+        return {
+          reply: reasoningResult.alternativeSuggestion,
+          intention: detection.intention,
+          confidence: reasoningResult.confidence,
+          conversationState: context.stage,
+        };
+      }
+      
+      // Enriquecer detección con datos del reasoning
+      if (reasoningResult.enrichedData) {
+        detection.extractedData = { ...detection.extractedData, ...reasoningResult.enrichedData };
+      }
+    } catch (reasoningError) {
+      this.logger.warn('Error en ReasoningEngine (continuando sin él):', reasoningError);
+    }
+
+    // 12. Procesar según intención usando handlers
     const handlerContext = {
       detection,
       context,
       dto,
       company,
       userId,
+      reasoning: reasoningResult?.handlerContext, // Pasar contexto del reasoning
     };
 
     if (detection.intention === 'saludar') {
@@ -1226,22 +1352,71 @@ export class BotEngineService {
       newState.stage = 'idle';
     }
 
-    // 11. Invalidar cache ANTES de guardar para evitar race conditions
+    // 13. ========== CAPA COGNITIVA: SELF-CHECK ==========
+    // Verificar y auto-corregir la respuesta ANTES de enviarla
+    try {
+      const selfCheckResult = await this.selfCheck.checkResponse({
+        proposedResponse: reply,
+        userMessage: dto.message,
+        conversationHistory: context.conversationHistory?.map(m => m.content) || [],
+        collectedData: context.collectedData || {},
+        intention: detection.intention,
+      });
+      
+      if (!selfCheckResult.isCorrect) {
+        this.logger.debug(`🔄 SelfCheck detectó problemas: ${selfCheckResult.issues.join(', ')}`);
+        
+        // Si hay una respuesta corregida, usarla
+        if (selfCheckResult.correctedResponse) {
+          this.logger.debug(`🔄 Usando respuesta corregida`);
+          reply = selfCheckResult.correctedResponse;
+        }
+      }
+      
+      // Detectar satisfacción del usuario (para métricas)
+      const satisfaction = this.selfCheck.detectSatisfaction(
+        dto.message,
+        context.conversationHistory?.map(m => m.content) || []
+      );
+      
+      if (satisfaction.level === 'frustrated') {
+        this.logger.warn(`⚠️ Usuario parece frustrado: ${satisfaction.indicators.join(', ')}`);
+      }
+      
+      // Guardar métricas de satisfacción para análisis
+      newState.metadata = newState.metadata || {};
+      newState.metadata.lastSatisfaction = satisfaction;
+    } catch (selfCheckError) {
+      this.logger.warn('Error en SelfCheck (continuando sin él):', selfCheckError);
+    }
+
+    // 14. ========== ACTUALIZAR MEMORIA DEL USUARIO ==========
+    try {
+      await this.userMemory.updateMemoryFromInteraction(userId, dto.companyId, {
+        message: dto.message,
+        intention: detection.intention,
+        extractedData: detection.extractedData,
+      });
+    } catch (memoryError) {
+      this.logger.warn('Error actualizando memoria del usuario:', memoryError);
+    }
+
+    // 15. Invalidar cache ANTES de guardar para evitar race conditions
     await this.contextCache.invalidateContext(contextKey);
     
-    // 12. Guardar estado actualizado
+    // 16. Guardar estado actualizado
     await this.conversations.saveContext(userId, dto.companyId, newState);
 
-      // 13. Agregar respuesta al historial
+      // 17. Agregar respuesta al historial
     await this.conversations.addMessage(userId, dto.companyId, 'assistant', reply);
 
-      // 14. Si la reserva se completó, crear/buscar conversación en BD para pagos
+      // 18. Si la reserva se completó, crear/buscar conversación en BD para pagos
     let conversationId = `${userId}_${dto.companyId}`;
     if (newState.stage === 'completed' && detection.intention === 'reservar') {
       conversationId = await this.conversations.findOrCreateConversation(userId, dto.companyId);
     }
 
-      // 15. VALIDACIÓN FINAL: NUNCA retornar respuesta vacía
+      // 19. VALIDACIÓN FINAL: NUNCA retornar respuesta vacía
     if (!reply || reply.trim().length === 0) {
       this.logger.warn(`Respuesta vacía detectada para intención: ${detection.intention}. Usando fallback.`);
       reply = detection.suggestedReply || 
@@ -1249,7 +1424,7 @@ export class BotEngineService {
               'Lo siento, no pude procesar tu mensaje. Por favor intenta de nuevo o reformula tu pregunta.';
     }
 
-    // 16. LOGGING AVANZADO: Registrar interacción para métricas y análisis
+    // 20. LOGGING AVANZADO: Registrar interacción para métricas y análisis
     try {
       const endTime = Date.now();
       await this.conversationLogging.logInteraction({
@@ -1489,6 +1664,119 @@ Responde ÚNICAMENTE: true o false`;
       return false;
     }
   }
-}
 
+  /**
+   * Enriquece la detección con entidades extraídas por EntityNormalizer
+   * Se aplica como fallback cuando OpenAI no detecta ciertos campos
+   * 
+   * IMPORTANTE: Este método es GENÉRICO y maneja TODOS los tipos de entidades,
+   * no solo campos específicos. Si OpenAI falla en extraer algo, EntityNormalizer
+   * puede capturarlo con reglas regex.
+   */
+  private enrichDetectionWithEntityNormalizer(
+    detection: DetectionResult,
+    message: string,
+  ): DetectionResult {
+    const entityExtraction = this.entityNormalizer.extractAll(message);
+    
+    if (!entityExtraction.hasEntities) {
+      return detection;
+    }
 
+    if (!detection.extractedData) {
+      detection.extractedData = {};
+    }
+
+    // Mapeo de tipos de entidad a campos de extractedData
+    const entityToFieldMap: Record<string, string> = {
+      'date': 'date',
+      'time': 'time',
+      'phone': 'phone',
+      'quantity': 'guests',
+      'email': 'email',
+      'name': 'name',
+      'amount': 'amount',
+      'duration': 'duration',
+    };
+
+    let enriched = false;
+
+    for (const entity of entityExtraction.entities) {
+      const fieldName = entityToFieldMap[entity.type];
+      if (!fieldName) continue;
+
+      // Solo agregar si el campo NO existe en la detección actual
+      const currentValue = detection.extractedData[fieldName];
+      if (currentValue !== null && currentValue !== undefined && currentValue !== '') {
+        continue; // Ya tiene valor, no sobrescribir
+      }
+
+      // Procesar según el tipo
+      switch (entity.type) {
+        case 'date':
+          const dateValue = entity.value instanceof Date 
+            ? entity.value 
+            : new Date(entity.value as string);
+          if (!isNaN(dateValue.getTime())) {
+            detection.extractedData.date = DateHelper.formatDateToISO(dateValue);
+            this.logger.log(`📅 EntityNormalizer enriqueció fecha: ${detection.extractedData.date}`);
+            enriched = true;
+          }
+          break;
+
+        case 'time':
+          detection.extractedData.time = entity.value as string;
+          this.logger.log(`🕐 EntityNormalizer enriqueció hora: ${detection.extractedData.time}`);
+          enriched = true;
+          break;
+
+        case 'phone':
+          const phone = String(entity.value).replace(/\D/g, '');
+          if (phone.length >= 7 && phone.length <= 15) {
+            detection.extractedData.phone = phone;
+            this.logger.log(`📱 EntityNormalizer enriqueció teléfono: ${phone}`);
+            enriched = true;
+          }
+          break;
+
+        case 'quantity':
+          const qty = Number(entity.value);
+          if (!isNaN(qty) && qty > 0 && qty <= 100) {
+            detection.extractedData.guests = qty;
+            this.logger.log(`👥 EntityNormalizer enriqueció comensales: ${qty}`);
+            enriched = true;
+          }
+          break;
+
+        case 'email':
+          detection.extractedData.email = String(entity.value).toLowerCase();
+          this.logger.log(`📧 EntityNormalizer enriqueció email: ${detection.extractedData.email}`);
+          enriched = true;
+          break;
+
+        case 'name':
+          detection.extractedData.name = String(entity.value);
+          this.logger.log(`👤 EntityNormalizer enriqueció nombre: ${detection.extractedData.name}`);
+          enriched = true;
+          break;
+
+        case 'amount':
+          detection.extractedData.amount = Number(entity.value);
+          this.logger.log(`💰 EntityNormalizer enriqueció monto: ${detection.extractedData.amount}`);
+          enriched = true;
+          break;
+
+        case 'duration':
+          detection.extractedData.duration = Number(entity.value);
+          this.logger.log(`⏱️ EntityNormalizer enriqueció duración: ${detection.extractedData.duration}`);
+          enriched = true;
+          break;
+      }
+    }
+
+    if (enriched) {
+      this.logger.log(`✨ Detección enriquecida con EntityNormalizer: ${JSON.stringify(detection.extractedData)}`);
+    }
+
+    return detection;
+  }}

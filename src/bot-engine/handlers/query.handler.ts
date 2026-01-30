@@ -1,16 +1,20 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { AvailabilityService } from '../../availability/availability.service';
 import { MessagesTemplatesService } from '../../messages-templates/messages-templates.service';
 import { ProductsService } from '../../products/products.service';
+import { ServicesService } from '../../services/services.service';
 import { KeywordDetectorService } from '../utils/keyword-detector.service';
 import { IIntentionHandler, IntentionHandlerContext, IntentionHandlerResult } from './intention-handler.interface';
 
 @Injectable()
 export class QueryHandler implements IIntentionHandler {
+  private readonly logger = new Logger(QueryHandler.name);
+
   constructor(
     private availability: AvailabilityService,
     private messagesTemplates: MessagesTemplatesService,
     private productsService: ProductsService,
+    private servicesService: ServicesService,  // ← NUEVO: Inyectar ServicesService
     private keywordDetector: KeywordDetectorService,
   ) {}
 
@@ -21,7 +25,21 @@ export class QueryHandler implements IIntentionHandler {
     const hoursText = this.formatHours(config?.hours);
     let reply: string;
     
-    // PRIORIDAD 0: Si es una consulta de disponibilidad específica (queryType: 'availability')
+    // PRIORIDAD 0: Si es consulta de CATÁLOGO COMPLETO (queryType: 'catalog')
+    // El usuario quiere ver el menú/carta/productos completos
+    if (detection.extractedData?.queryType === 'catalog') {
+      reply = await this.buildCatalogResponse(company);
+      
+      return {
+        reply,
+        newState: {
+          ...conversationContext,
+          stage: 'idle' as const,
+        },
+      };
+    }
+    
+    // PRIORIDAD 0.5: Si es una consulta de disponibilidad específica (queryType: 'availability')
     // Mostrar horarios disponibles para el servicio mencionado
     if (detection.extractedData?.queryType === 'availability') {
       const extracted = detection.extractedData;
@@ -33,19 +51,15 @@ export class QueryHandler implements IIntentionHandler {
       if (extracted.service) {
         // Si OpenAI extrajo el servicio directamente
         serviceKey = extracted.service;
-        const serviceConfig = config?.services?.[serviceKey];
-        serviceName = serviceConfig?.name || serviceKey;
+        // Buscar servicio en la tabla Service (BD)
+        const serviceFromDB = await this.servicesService.getServiceByKey(dto.companyId, serviceKey);
+        serviceName = serviceFromDB?.name || serviceKey;
       } else {
-        // Buscar el servicio en el mensaje usando keywords
-        const normalizedMessage = dto.message.toLowerCase();
-        for (const [key, serviceData] of Object.entries(config?.services || {})) {
-          const service = serviceData as any;
-          const keywords = service.keywords || [];
-          if (keywords.some((kw: string) => normalizedMessage.includes(kw.toLowerCase()))) {
-            serviceKey = key;
-            serviceName = service.name;
-            break;
-          }
+        // Buscar el servicio en el mensaje usando keywords desde la tabla Service
+        const detectedService = await this.servicesService.detectServiceFromMessage(dto.companyId, dto.message);
+        if (detectedService) {
+          serviceKey = detectedService.key;
+          serviceName = detectedService.name;
         }
       }
       
@@ -207,41 +221,13 @@ export class QueryHandler implements IIntentionHandler {
     if (askingAboutProducts) {
       reply = '';
       
-      // Mostrar servicios disponibles desde BD (tabla Product con category 'service')
-      const services = await this.productsService.findByCompany(company.id);
-      const serviceProducts = services.filter(s => s.category === 'service');
-      const regularProducts = services.filter(s => s.category !== 'service');
+      // Mostrar SOLO servicios disponibles desde BD (tabla Service)
+      // Los productos se muestran cuando el usuario elige un servicio específico
+      const servicesFromDB = await this.servicesService.getAvailableServices(company.id);
       
-      if (serviceProducts.length > 0) {
-        const servicesList = serviceProducts
-          .map(s => `• ${s.name}`)
-          .join('\n');
-        reply = `Ofrecemos los siguientes servicios:\n\n${servicesList}`;
-      }
-      
-      // Mostrar productos disponibles si existen
-      if (regularProducts.length > 0) {
-        const productsList = regularProducts
-          .map((p) => {
-            const price = new Intl.NumberFormat('es-CO', { 
-              style: 'currency', 
-              currency: 'COP', 
-              minimumFractionDigits: 0 
-            }).format(p.price || 0);
-            return `• ${p.name} - ${price}`;
-          })
-          .join('\n');
-        
-        if (reply) {
-          reply += `\n\n🍔 **Menú/Productos:**\n${productsList}`;
-        } else {
-          reply = `🍔 **Menú/Productos disponibles:**\n\n${productsList}`;
-        }
-      }
-      
-      // SIEMPRE asegurar que hay respuesta
-      if (reply && reply.trim().length > 0) {
-        reply += '\n\n¿Qué te gustaría pedir? 😊';
+      if (servicesFromDB.length > 0) {
+        reply = await this.formatServicesFromDB(servicesFromDB, company);
+        reply += '\n\n¿Qué servicio te interesa? 😊';
         
         return {
           reply,
@@ -251,7 +237,7 @@ export class QueryHandler implements IIntentionHandler {
           },
         };
       }
-      // Si no hay productos ni servicios, continuar con el flujo normal
+      // Si no hay servicios, continuar con el flujo normal
     }
     
     // PRIORIDAD 3: Verificar si la consulta incluye fecha/hora específica (consulta de disponibilidad)
@@ -346,5 +332,216 @@ export class QueryHandler implements IIntentionHandler {
     }
 
     return formattedSlots.join('. ');
+  }
+
+  /**
+   * Construye respuesta con el catálogo completo de productos/servicios
+   * Dinámico según el tipo de empresa (restaurante, spa, gym, etc.)
+   */
+  private async buildCatalogResponse(company: any): Promise<string> {
+    // 1. Obtener servicios de la tabla Service (BD)
+    const servicesFromDB = await this.servicesService.getAvailableServices(company.id);
+    
+    // Determinar terminología según tipo de empresa
+    const terminology = this.getTerminology(company.type);
+    
+    // 3. Si no hay servicios disponibles
+    if (servicesFromDB.length === 0) {
+      return `Lo siento, actualmente no tenemos ${terminology.items} disponibles. ¿En qué más puedo ayudarte? 😊`;
+    }
+    
+    // 4. Construir respuesta - SOLO SERVICIOS
+    // Los productos se muestran cuando el usuario elige un servicio específico
+    let reply = `📋 **${terminology.catalog} de ${company.name}**\n\n`;
+    
+    // Mostrar servicios desde la tabla Service
+    reply += await this.formatServicesFromDB(servicesFromDB, company);
+    
+    reply += `\n\n¿Te gustaría información sobre algún ${terminology.item} en específico o hacer una reserva? 😊`;
+    
+    return reply;
+  }
+  
+  /**
+   * Formatea servicios desde la tabla Service según tipo de empresa
+   */
+  private async formatServicesFromDB(services: any[], company: any): Promise<string> {
+    if (!services || services.length === 0) {
+      return '';
+    }
+
+    let reply = '';
+    const companyType = company.type;
+
+    if (companyType === 'clinic') {
+      reply = `🏥 **Servicios de ${company.name}:**\n\n`;
+      for (const service of services) {
+        const price = service.basePrice 
+          ? this.formatPrice(service.basePrice)
+          : 'Consultar';
+        const duration = service.config?.duration 
+          ? `⏱️ ${service.config.duration} min` 
+          : '';
+        
+        reply += `• **${service.name}** - ${price}\n`;
+        if (service.description) {
+          reply += `  _${service.description}_\n`;
+        }
+        if (duration) {
+          reply += `  ${duration}\n`;
+        }
+      }
+    } else if (companyType === 'spa') {
+      reply = `🧖 **Servicios de ${company.name}:**\n\n`;
+      for (const service of services) {
+        const price = service.basePrice 
+          ? this.formatPrice(service.basePrice)
+          : 'Consultar';
+        const duration = service.config?.duration 
+          ? `⏱️ ${service.config.duration} min` 
+          : '';
+        
+        reply += `✨ **${service.name}** - ${price}\n`;
+        if (service.description) {
+          reply += `   _${service.description}_\n`;
+        }
+        if (duration) {
+          reply += `   ${duration}\n`;
+        }
+      }
+    } else if (companyType === 'restaurant') {
+      reply = `🍽️ **Servicios de ${company.name}:**\n\n`;
+      reply += `Te ofrecemos las siguientes opciones:\n\n`;
+      
+      for (const service of services) {
+        let emoji = '📍';
+        if (service.key === 'mesa') emoji = '🪑';
+        else if (service.key === 'domicilio') emoji = '🛵';
+        else if (service.key === 'recoger') emoji = '📦';
+
+        reply += `${emoji} **${service.name}**\n`;
+        if (service.description) {
+          reply += `   _${service.description}_\n`;
+        }
+        
+        // Mostrar info relevante del config
+        if (service.config?.deliveryFee) {
+          reply += `   💰 Costo de envío: ${this.formatPrice(service.config.deliveryFee)}\n`;
+        }
+        if (service.config?.minOrderAmount) {
+          reply += `   📋 Pedido mínimo: ${this.formatPrice(service.config.minOrderAmount)}\n`;
+        }
+        if (service.config?.estimatedDeliveryTime) {
+          reply += `   ⏱️ Tiempo estimado: ${service.config.estimatedDeliveryTime} min\n`;
+        }
+        reply += '\n';
+      }
+    } else {
+      // Genérico
+      reply = `📋 **Servicios disponibles:**\n\n`;
+      for (const service of services) {
+        const price = service.basePrice 
+          ? ` - ${this.formatPrice(service.basePrice)}` 
+          : '';
+        
+        reply += `• **${service.name}**${price}\n`;
+        if (service.description) {
+          reply += `  _${service.description}_\n`;
+        }
+      }
+    }
+
+    return reply.trim();
+  }
+  
+  /**
+   * Construye catálogo desde config (fallback)
+   */
+  private buildCatalogFromConfig(products: any[], terminology: any): string {
+    if (!Array.isArray(products) || products.length === 0) {
+      return `Lo siento, actualmente no tenemos ${terminology.items} disponibles. ¿En qué más puedo ayudarte? 😊`;
+    }
+    
+    let reply = `📋 **${terminology.catalog}:**\n\n`;
+    
+    // Agrupar por categoría
+    const grouped: Record<string, any[]> = {};
+    products.forEach((p: any) => {
+      const cat = p.category || 'General';
+      if (!grouped[cat]) grouped[cat] = [];
+      grouped[cat].push(p);
+    });
+    
+    for (const [category, items] of Object.entries(grouped)) {
+      const categoryTitle = category.charAt(0).toUpperCase() + category.slice(1);
+      reply += `**${categoryTitle}:**\n`;
+      
+      items.forEach((item: any) => {
+        reply += `• ${item.name}`;
+        if (item.price) {
+          reply += ` - ${this.formatPrice(item.price)}`;
+        }
+        if (item.duration) {
+          reply += ` (${item.duration} min)`;
+        }
+        reply += '\n';
+      });
+      reply += '\n';
+    }
+    
+    reply += `¿Te gustaría más información o hacer una reserva? 😊`;
+    
+    return reply;
+  }
+  
+  /**
+   * Obtiene terminología según el tipo de empresa
+   */
+  private getTerminology(companyType: string): { catalog: string; items: string; item: string; services: string } {
+    const terminologies: Record<string, any> = {
+      restaurant: {
+        catalog: 'Menú',
+        items: 'platos',
+        item: 'plato',
+        services: 'Servicios'
+      },
+      spa: {
+        catalog: 'Servicios',
+        items: 'tratamientos',
+        item: 'tratamiento',
+        services: 'Tratamientos'
+      },
+      gym: {
+        catalog: 'Planes y Servicios',
+        items: 'planes',
+        item: 'plan',
+        services: 'Planes'
+      },
+      clinic: {
+        catalog: 'Servicios Médicos',
+        items: 'servicios',
+        item: 'servicio',
+        services: 'Especialidades'
+      },
+      default: {
+        catalog: 'Catálogo',
+        items: 'productos',
+        item: 'producto',
+        services: 'Servicios'
+      }
+    };
+    
+    return terminologies[companyType] || terminologies.default;
+  }
+  
+  /**
+   * Formatea precio en moneda colombiana
+   */
+  private formatPrice(price: number): string {
+    return new Intl.NumberFormat('es-CO', {
+      style: 'currency',
+      currency: 'COP',
+      minimumFractionDigits: 0,
+    }).format(price);
   }
 }

@@ -19,6 +19,8 @@ export async function seedServiceKeywords(prisma: PrismaClient, companyId?: stri
     
     // Keywords para MESA/RESTAURANTE
     { keyword: 'mesa', serviceKey: 'mesa', type: 'contains', weight: 1.0 },
+    { keyword: 'reserva', serviceKey: 'mesa', type: 'contains', weight: 0.95 },
+    { keyword: 'reservar', serviceKey: 'mesa', type: 'contains', weight: 0.95 },
     { keyword: 'reservar mesa', serviceKey: 'mesa', type: 'contains', weight: 0.95 },
     { keyword: 'reserva de mesa', serviceKey: 'mesa', type: 'contains', weight: 0.95 },
     { keyword: 'comer en el restaurante', serviceKey: 'mesa', type: 'contains', weight: 0.9 },

@@ -17,6 +17,7 @@ import { ProductsModule } from './products/products.module';
 import { ResourcesModule } from './resources/resources.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { CommonModule } from './common/common.module';
+import { ServicesModule } from './services/services.module';
 
 @Module({
   imports: [
@@ -57,6 +58,7 @@ import { CommonModule } from './common/common.module';
     ProductsModule,
     ResourcesModule,
     InventoryModule,
+    ServicesModule,  // ← NUEVO: Servicios desde BD
   ],
   providers: [
     // Guard global de Rate Limiting

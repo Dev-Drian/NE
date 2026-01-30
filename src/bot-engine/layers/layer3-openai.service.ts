@@ -220,11 +220,18 @@ ${reservationsText.join('\n')}
       
       // VALIDAR Y NORMALIZAR DATOS EXTRAÍDOS
       if (parsed.extractedData) {
-        // VALIDACIÓN 1: Teléfono - debe tener 7-10 dígitos
+        // VALIDACIÓN 1: Teléfono - debe tener 7-15 dígitos (soporta códigos de país)
         if (parsed.extractedData.phone) {
-          const phone = parsed.extractedData.phone.toString().replace(/\D/g, '');
-          if (phone.length < 7 || phone.length > 10) {
-            console.warn(`⚠️ Teléfono inválido detectado: ${parsed.extractedData.phone}`);
+          let phone = parsed.extractedData.phone.toString().replace(/\D/g, '');
+          
+          // Si tiene código de país Colombia (+57), quitarlo
+          if (phone.startsWith('57') && phone.length >= 12) {
+            phone = phone.substring(2);
+          }
+          
+          // Validar longitud: 7-10 dígitos para Colombia, hasta 15 para internacional
+          if (phone.length < 7 || phone.length > 15) {
+            console.warn(`⚠️ Teléfono inválido detectado: ${parsed.extractedData.phone} (${phone.length} dígitos)`);
             delete parsed.extractedData.phone;
             if (!parsed.missingFields) parsed.missingFields = [];
             if (!parsed.missingFields.includes('phone')) {
@@ -232,6 +239,7 @@ ${reservationsText.join('\n')}
             }
           } else {
             parsed.extractedData.phone = phone;
+            console.log(`✅ Teléfono extraído: ${phone}`);
           }
         }
         

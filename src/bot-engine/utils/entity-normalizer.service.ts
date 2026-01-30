@@ -293,8 +293,10 @@ export class EntityNormalizerService {
   extractPhones(message: string): NormalizedEntity[] {
     const entities: NormalizedEntity[] = [];
 
-    // Patrones de teléfono colombiano
+    // Patrones de teléfono colombiano (7-15 dígitos)
     const patterns = [
+      // Número largo sin formato: 3145139133, 31451391339, etc. (7-15 dígitos)
+      /\b\d{7,15}\b/g,
       // 3001234567, 300 123 4567
       /\b3[0-9]{2}[\s-]?[0-9]{3}[\s-]?[0-9]{4}\b/g,
       // +57 300 123 4567

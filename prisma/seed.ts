@@ -1,6 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { seedRestaurantProducts } from './seeds/seed-products-restaurant';
-import { seedRestaurantServices } from './seeds/seed-restaurant-services';
+import { seedRestaurantServices, seedClinicServices } from './seeds/seed-services';
 import { seedRestaurantResources } from './seeds/seed-resources-restaurant';
 import { seedClinicProducts, seedClinicResources } from './seeds/seed-clinic';
 import { seedServiceKeywords } from './seeds/seed-keywords';
@@ -13,8 +13,8 @@ const prisma = new PrismaClient();
 async function main() {
   console.log('🌱 Iniciando seed...');
 
-  // Limpiar datos anteriores (opcional - solo para desarrollo)
-  // IMPORTANTE: Eliminar en orden para evitar foreign key constraints
+  // Limpiar datos anteriores (en orden para evitar FK constraints)
+  console.log('🗑️ Limpiando datos anteriores...');
   await prisma.stockMovement.deleteMany();
   await prisma.reservationItem.deleteMany();
   await prisma.productPromotion.deleteMany();
@@ -28,8 +28,9 @@ async function main() {
   await prisma.intentionPattern.deleteMany();
   await prisma.intention.deleteMany();
   await prisma.serviceKeyword.deleteMany();
-  await prisma.company.deleteMany();
+  await prisma.service.deleteMany();  // ← NUEVO: Limpiar servicios
   await prisma.user.deleteMany();
+  await prisma.company.deleteMany();
   await prisma.messageTemplateConfig.deleteMany();
 
   // ========== CREAR EMPRESA: RESTAURANTE ==========
@@ -57,15 +58,15 @@ async function main() {
           sunday: '12:00-22:00',
         },
         // NOTA: services, products y resources ahora están en tablas de BD
-        // Ver: Product, Resource, ServiceKeyword
+        // Ver: Service, Product, Resource, ServiceKeyword
       },
     },
   });
   console.log(`✅ Empresa creada: ${company.name} (${company.id})`);
 
-  // Migrar productos, servicios y recursos del restaurante
+  // ========== SERVICIOS, PRODUCTOS Y RECURSOS DEL RESTAURANTE ==========
+  await seedRestaurantServices(prisma, company.id);  // ← NUEVO: Servicios en tabla dedicada
   await seedRestaurantProducts(prisma, company.id);
-  await seedRestaurantServices(prisma, company.id); // Crea 'mesa' y 'domicilio' como productos tipo service
   await seedRestaurantResources(prisma, company.id);
 
   // ========== CREAR EMPRESA: CLÍNICA DENTAL ==========
@@ -93,13 +94,14 @@ async function main() {
           sunday: 'cerrado',
         },
         // NOTA: services, products y resources ahora están en tablas de BD
-        // Ver: Product, Resource, ServiceKeyword
+        // Ver: Service, Product, Resource, ServiceKeyword
       },
     },
   });
   console.log(`✅ Empresa creada: ${clinica.name} (${clinica.id})`);
 
-  // Migrar productos y recursos de la clínica
+  // ========== SERVICIOS, PRODUCTOS Y RECURSOS DE LA CLÍNICA ==========
+  await seedClinicServices(prisma, clinica.id);  // ← NUEVO: Servicios en tabla dedicada
   await seedClinicProducts(prisma, clinica.id);
   await seedClinicResources(prisma, clinica.id);
 
@@ -111,13 +113,38 @@ async function main() {
   await seedServiceKeywords(prisma, company.id);
 
   // ========== RESUMEN ==========
-  console.log('\n✨ Seed completado exitosamente!');
+  console.log('\n' + '='.repeat(60));
+  console.log('✨ Seed completado exitosamente!');
+  console.log('='.repeat(60));
+  
   console.log(`\n📋 IDs de empresas para pruebas:`);
-  console.log(`   - Restaurante La Pasta (restaurant): ${company.id}`);
-  console.log(`   - Clínica Dental Sonrisas (clinic): ${clinica.id}`);
+  console.log(`   - Restaurante La Pasta: ${company.id}`);
+  console.log(`   - Clínica Dental Sonrisas: ${clinica.id}`);
+  
   console.log(`\n📋 IDs de usuarios para pruebas:`);
   users.forEach(user => {
-    console.log(`   - ${user.name}: ${user.id} (teléfono: ${user.phone})`);
+    console.log(`   - ${user.name}: ${user.id} (${user.phone})`);
+  });
+
+  // Mostrar servicios creados
+  const restaurantServices = await prisma.service.findMany({ 
+    where: { companyId: company.id },
+    orderBy: { displayOrder: 'asc' }
+  });
+  const clinicServices = await prisma.service.findMany({ 
+    where: { companyId: clinica.id },
+    orderBy: { displayOrder: 'asc' }
+  });
+  
+  console.log(`\n🍽️ Servicios del Restaurante (${restaurantServices.length}):`);
+  restaurantServices.forEach(s => {
+    console.log(`   - ${s.key}: ${s.name} (campos: ${s.requiredFields.join(', ')})`);
+  });
+  
+  console.log(`\n🏥 Servicios de la Clínica (${clinicServices.length}):`);
+  clinicServices.forEach(s => {
+    const price = s.basePrice ? ` - $${s.basePrice.toLocaleString()}` : '';
+    console.log(`   - ${s.key}: ${s.name}${price}`);
   });
 }
 

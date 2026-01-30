@@ -43,6 +43,7 @@ import { ReferenceResolverService } from './services/reference-resolver.service'
 import { IntentionOrchestratorService } from './services/intention-orchestrator.service';
 import { PrismaModule } from '../prisma/prisma.module';
 import { ProductsModule } from '../products/products.module';
+import { ServicesModule } from '../services/services.module';
 // ===== SERVICIOS NLU AVANZADOS =====
 import { SpellCheckerService } from './utils/spell-checker.service';
 import { LearningService } from './services/learning.service';
@@ -50,6 +51,10 @@ import { SynonymService } from './utils/synonym.service';
 import { DetectionExplainerService } from './utils/detection-explainer.service';
 import { EntityNormalizerService } from './utils/entity-normalizer.service';
 import { NluTestController } from './nlu-test.controller';
+// ===== SERVICIOS COGNITIVOS (Nivel ChatGPT) =====
+import { ReasoningEngineService } from './services/reasoning-engine.service';
+import { UserMemoryService } from './services/user-memory.service';
+import { SelfCheckService } from './services/self-check.service';
 
 @Module({
   imports: [
@@ -64,6 +69,7 @@ import { NluTestController } from './nlu-test.controller';
     PaymentsModule,
     KeywordsModule,
     ProductsModule,
+    ServicesModule,  // ← NUEVO: Módulo de servicios desde BD
   ],
   controllers: [NluTestController],
   providers: [
@@ -124,6 +130,13 @@ import { NluTestController } from './nlu-test.controller';
     DetectionExplainerService,
     // Normalizador de entidades (fechas, horas, cantidades)
     EntityNormalizerService,
+    // ===== SERVICIOS COGNITIVOS (Nivel ChatGPT) =====
+    // Motor de razonamiento (pensar antes de actuar)
+    ReasoningEngineService,
+    // Memoria semántica de largo plazo del usuario
+    UserMemoryService,
+    // Auto-corrección de respuestas
+    SelfCheckService,
   ],
   exports: [
     BotEngineService, 
@@ -135,6 +148,10 @@ import { NluTestController } from './nlu-test.controller';
     SpellCheckerService,
     EntityNormalizerService,
     SynonymService,
+    // Servicios cognitivos
+    ReasoningEngineService,
+    UserMemoryService,
+    SelfCheckService,
   ],
 })
 export class BotEngineModule {}
