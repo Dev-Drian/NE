@@ -1,6 +1,7 @@
 import { Controller, Post, Body, Headers, Get, Param, Logger } from '@nestjs/common';
 import { PaymentsService } from './payments.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
+import { Public } from '../auth/decorators/public.decorator';
 
 @Controller('payments')
 export class PaymentsController {
@@ -8,11 +9,13 @@ export class PaymentsController {
 
   constructor(private readonly paymentsService: PaymentsService) {}
 
+  @Public()
   @Post()
   async createPayment(@Body() createPaymentDto: CreatePaymentDto) {
     return this.paymentsService.createPayment(createPaymentDto);
   }
 
+  @Public()
   @Post('webhook')
   async handleWebhook(
     @Headers('x-signature') headerSignature: string,

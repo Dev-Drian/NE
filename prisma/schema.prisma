@@ -7,18 +7,89 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ============================================
+// SISTEMA DE AUTENTICACIÓN Y ADMINISTRACIÓN
+// ============================================
+
+model Admin {
+  id        String    @id @default(uuid())
+  email     String    @unique
+  password  String    // Hashed password
+  name      String
+  role      AdminRole @default(COMPANY_ADMIN)
+  active    Boolean   @default(true)
+  
+  // Relación con empresa (null = super admin global)
+  companyId String?
+  company   Company?  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  
+  // Tokens y sesiones
+  refreshToken String?
+  lastLoginAt  DateTime?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([email])
+  @@index([companyId])
+  @@map("admins")
+}
+
+enum AdminRole {
+  SUPER_ADMIN    // Acceso total a todo el sistema
+  COMPANY_ADMIN  // Admin de una empresa específica
+  COMPANY_USER   // Usuario con permisos limitados
+}
+
+model GlobalSettings {
+  id    String @id @default("global")
+  
+  // OAuth2 / Auth Config (global para todas las empresas)
+  jwtSecret     String?
+  jwtExpiresIn  String  @default("7d")
+  
+  // API Keys de IA (globales, las empresas pueden tener las suyas propias)
+  openaiApiKey  String?
+  geminiApiKey  String?
+  defaultAiProvider String @default("openai") // 'openai' | 'gemini'
+  
+  // WhatsApp Config (global)
+  whatsappToken      String?
+  whatsappPhoneId    String?
+  whatsappVerifyToken String?
+  
+  // Wompi Config (global)
+  wompiPublicKey  String?
+  wompiPrivateKey String?
+  wompiEventsUrl  String?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("global_settings")
+}
+
 model Company {
   id          String  @id @default(uuid())
   name        String
+  slug        String  @unique // URL-friendly identifier
   type        String // 'restaurant', 'spa', 'salon', 'clinic'
   description String?
   phone       String?
+  email       String?
+  address     String?
+  logo        String?
   active      Boolean @default(true)
 
   // Configuración JSON (solo settings estáticos: horarios, personalidad)
   config Json @default("{}")
   // Ejemplo: { "hours": {"monday": "09:00-18:00"}, "personality": {...} }
 
+  // API Keys propias (opcionales - si no tiene, usa las globales)
+  openaiApiKey String?
+  geminiApiKey String?
+  preferredAiProvider String? // null = usa el global
+  
   // Configuración de pagos
   requiresPayment   Boolean @default(false)
   paymentPercentage Int     @default(100) // 50 = 50%, 100 = 100%
@@ -30,6 +101,8 @@ model Company {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // Relaciones
+  admins           Admin[]
   intentions       Intention[]
   reservations     Reservation[]
   payments         Payment[]
@@ -39,7 +112,7 @@ model Company {
   promotions       Promotion[]
   conversationLogs ConversationLog[]
   userPreferences  UserPreference[]
-  services         Service[] // ← NUEVA RELACIÓN: Servicios de la empresa
+  services         Service[]
 
   @@map("companies")
 }

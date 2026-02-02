@@ -3,6 +3,8 @@ import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { PrismaModule } from './prisma/prisma.module';
+import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
+import { AuthModule } from './auth/auth.module';
 import { CompaniesModule } from './companies/companies.module';
 import { IntentionsModule } from './intentions/intentions.module';
 import { ReservationsModule } from './reservations/reservations.module';
@@ -18,6 +20,7 @@ import { ResourcesModule } from './resources/resources.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { CommonModule } from './common/common.module';
 import { ServicesModule } from './services/services.module';
+import { GlobalSettingsModule } from './global-settings/global-settings.module';
 
 @Module({
   imports: [
@@ -45,6 +48,8 @@ import { ServicesModule } from './services/services.module';
       verboseMemoryLeak: true,
     }),
     PrismaModule,
+    AuthModule,
+    GlobalSettingsModule,
     CompaniesModule,
     IntentionsModule,
     ReservationsModule,
@@ -58,13 +63,18 @@ import { ServicesModule } from './services/services.module';
     ProductsModule,
     ResourcesModule,
     InventoryModule,
-    ServicesModule,  // ← NUEVO: Servicios desde BD
+    ServicesModule,
   ],
   providers: [
     // Guard global de Rate Limiting
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,
+    },
+    // Guard global de Autenticación JWT
+    {
+      provide: APP_GUARD,
+      useClass: JwtAuthGuard,
     },
   ],
 })

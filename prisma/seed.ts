@@ -39,9 +39,11 @@ async function main() {
   const company = await prisma.company.create({
     data: {
       name: 'Restaurante La Pasta',
+      slug: 'restaurante-la-pasta',
       type: 'restaurant',
       description: 'Restaurante italiano especializado en pasta y pizza',
       phone: '+34 912 345 678',
+      email: 'info@lapasta.com',
       active: true,
       requiresPayment: true,
       paymentPercentage: 50,
@@ -75,9 +77,11 @@ async function main() {
   const clinica = await prisma.company.create({
     data: {
       name: 'Clínica Dental Sonrisas',
+      slug: 'clinica-dental-sonrisas',
       type: 'clinic',
       description: 'Clínica dental especializada en ortodoncia y estética dental',
       phone: '+34 911 222 333',
+      email: 'citas@sonrisas.com',
       active: true,
       requiresPayment: true,
       paymentPercentage: 100,
@@ -111,9 +115,11 @@ async function main() {
   const chalet = await prisma.company.create({
     data: {
       name: 'Fincas El Refugio',
+      slug: 'fincas-el-refugio',
       type: 'chalet',
       description: 'Alquiler de fincas y cabañas vacacionales con piscina, jacuzzi y BBQ',
       phone: '+57 315 123 4567',
+      email: 'reservas@elrefugio.com',
       active: true,
       requiresPayment: true,
       paymentPercentage: 30,
@@ -154,9 +160,11 @@ async function main() {
   const tiendaRopa = await prisma.company.create({
     data: {
       name: 'Boutique ModaStyle',
+      slug: 'boutique-modastyle',
       type: 'clothing_store',
       description: 'Tienda de moda con las últimas tendencias en ropa y accesorios',
       phone: '+57 318 765 4321',
+      email: 'ventas@modastyle.com',
       active: true,
       requiresPayment: true,
       paymentPercentage: 100,
@@ -198,6 +206,50 @@ async function main() {
   await seedClinicIntentions(prisma, clinica.id);
   const users = await seedTestUsers(prisma);
   await seedServiceKeywords(prisma, company.id);
+
+  // ========== CREAR SUPER ADMIN ==========
+  const bcrypt = require('bcryptjs');
+  const hashedPassword = await bcrypt.hash('admin123', 10);
+  
+  // Eliminar admins anteriores si existen
+  await prisma.admin.deleteMany();
+  
+  const superAdmin = await prisma.admin.create({
+    data: {
+      email: 'admin@ne.com',
+      password: hashedPassword,
+      name: 'Super Administrador',
+      role: 'SUPER_ADMIN',
+      active: true,
+    }
+  });
+  console.log(`✅ Super Admin creado: ${superAdmin.email}`);
+
+  // Crear admin para el restaurante
+  const restaurantAdmin = await prisma.admin.create({
+    data: {
+      email: 'admin@lapasta.com',
+      password: hashedPassword,
+      name: 'Admin Restaurante',
+      role: 'COMPANY_ADMIN',
+      companyId: company.id,
+      active: true,
+    }
+  });
+  console.log(`✅ Admin de empresa creado: ${restaurantAdmin.email}`);
+
+  // ========== CREAR CONFIGURACIÓN GLOBAL ==========
+  await prisma.globalSettings.upsert({
+    where: { id: 'global' },
+    update: {},
+    create: {
+      id: 'global',
+      jwtSecret: 'ne-bot-secret-key-change-in-production',
+      jwtExpiresIn: '7d',
+      defaultAiProvider: 'openai',
+    }
+  });
+  console.log(`✅ Configuración global creada`);
 
   // ========== RESUMEN ==========
   console.log('\n' + '='.repeat(60));

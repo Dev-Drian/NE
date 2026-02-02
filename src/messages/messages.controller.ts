@@ -3,7 +3,9 @@ import { BotEngineService } from '../bot-engine/bot-engine.service';
 import { UsersService } from '../users/users.service';
 import { SendMessageDto } from './dto/send-message.dto';
 import { MessageResponseDto } from './dto/message-response.dto';
+import { Public } from '../auth/decorators/public.decorator';
 
+@Public()  // Todo el controlador es público (webhook de WhatsApp)
 @Controller('messages')
 export class MessagesController {
   constructor(

@@ -3,6 +3,7 @@ import { SpellCheckerService } from './utils/spell-checker.service';
 import { SynonymService } from './utils/synonym.service';
 import { EntityNormalizerService } from './utils/entity-normalizer.service';
 import { LearningService } from './services/learning.service';
+import { Public } from '../auth/decorators/public.decorator';
 
 /**
  * Controlador de pruebas para el sistema NLU
@@ -16,6 +17,7 @@ import { LearningService } from './services/learning.service';
  * POST /api/nlu/test/full      - Probar pipeline completo
  * GET  /api/nlu/stats          - Ver estadísticas
  */
+@Public()  // Controlador de pruebas - público para desarrollo
 @Controller('api/nlu')
 export class NluTestController {
   constructor(
