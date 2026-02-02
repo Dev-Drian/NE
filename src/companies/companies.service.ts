@@ -22,6 +22,7 @@ interface CreateCompanyDto {
   wompiPrivateKey?: string;
   wompiEventsSecret?: string;
   wompiEnabled?: boolean;
+  active?: boolean;
 }
 
 interface UpdateCompanyDto extends Partial<CreateCompanyDto> {
@@ -133,6 +134,7 @@ export class CompaniesService {
         wompiPrivateKey: data.wompiPrivateKey,
         wompiEventsSecret: data.wompiEventsSecret,
         wompiEnabled: data.wompiEnabled || false,
+        active: data.active !== undefined ? data.active : true,
       }
     });
     

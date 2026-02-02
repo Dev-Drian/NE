@@ -1,4 +1,5 @@
 import { Controller, Get, Post, Body, Patch, Param, Delete, UseGuards, Query } from '@nestjs/common';
+import { IsString, IsOptional, IsBoolean, IsNumber, IsObject } from 'class-validator';
 import { CompaniesService } from './companies.service';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -7,45 +8,155 @@ import { Public } from '../auth/decorators/public.decorator';
 import { AdminRole } from '@prisma/client';
 
 class CreateCompanyDto {
+  @IsString()
   name: string;
+
+  @IsString()
   slug: string;
+
+  @IsString()
   type: string;
+
+  @IsOptional()
+  @IsString()
   description?: string;
+
+  @IsOptional()
+  @IsString()
   phone?: string;
+
+  @IsOptional()
+  @IsString()
   email?: string;
+
+  @IsOptional()
+  @IsString()
   address?: string;
+
+  @IsOptional()
+  @IsString()
   logo?: string;
+
+  @IsOptional()
+  @IsObject()
   config?: any;
+
+  @IsOptional()
+  @IsString()
   openaiApiKey?: string;
+
+  @IsOptional()
+  @IsString()
   geminiApiKey?: string;
+
+  @IsOptional()
+  @IsString()
   preferredAiProvider?: string;
+
+  @IsOptional()
+  @IsBoolean()
   requiresPayment?: boolean;
+
+  @IsOptional()
+  @IsNumber()
   paymentPercentage?: number;
+
+  @IsOptional()
+  @IsString()
   wompiPublicKey?: string;
+
+  @IsOptional()
+  @IsString()
   wompiPrivateKey?: string;
+
+  @IsOptional()
+  @IsString()
   wompiEventsSecret?: string;
+
+  @IsOptional()
+  @IsBoolean()
   wompiEnabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  active?: boolean;
 }
 
 class UpdateCompanyDto {
+  @IsOptional()
+  @IsString()
   name?: string;
+
+  @IsOptional()
+  @IsString()
   slug?: string;
+
+  @IsOptional()
+  @IsString()
   type?: string;
+
+  @IsOptional()
+  @IsString()
   description?: string;
+
+  @IsOptional()
+  @IsString()
   phone?: string;
+
+  @IsOptional()
+  @IsString()
   email?: string;
+
+  @IsOptional()
+  @IsString()
   address?: string;
+
+  @IsOptional()
+  @IsString()
   logo?: string;
+
+  @IsOptional()
+  @IsObject()
   config?: any;
+
+  @IsOptional()
+  @IsBoolean()
   active?: boolean;
+
+  @IsOptional()
+  @IsString()
   openaiApiKey?: string;
+
+  @IsOptional()
+  @IsString()
   geminiApiKey?: string;
+
+  @IsOptional()
+  @IsString()
   preferredAiProvider?: string;
+
+  @IsOptional()
+  @IsBoolean()
   requiresPayment?: boolean;
+
+  @IsOptional()
+  @IsNumber()
   paymentPercentage?: number;
+
+  @IsOptional()
+  @IsString()
   wompiPublicKey?: string;
+
+  @IsOptional()
+  @IsString()
   wompiPrivateKey?: string;
+
+  @IsOptional()
+  @IsString()
   wompiEventsSecret?: string;
+
+  @IsOptional()
+  @IsBoolean()
   wompiEnabled?: boolean;
 }
 
