@@ -320,32 +320,43 @@ ${reservationsText.join('\n')}
         }
         
         // VALIDACIÓN 6: Productos - validar que los IDs existan y normalizar nombres
-        if (parsed.extractedData.products) {
-          const availableProducts = config?.products || [];
-          const extractedProducts = Array.isArray(parsed.extractedData.products) ? parsed.extractedData.products : [];
+        if (parsed.extractedData.products || parsed.extractedData.productos) {
+          // Obtener productos de la BD (NO del config JSON)
+          const availableProducts = await this.productsService.findByCompany(companyId);
+          const extractedProducts = Array.isArray(parsed.extractedData.products) 
+            ? parsed.extractedData.products 
+            : (Array.isArray(parsed.extractedData.productos) ? parsed.extractedData.productos : []);
           const validatedProducts: any[] = [];
           
           for (const item of extractedProducts) {
             if (typeof item === 'object' && item.id) {
-              // Buscar producto por ID o por nombre
-              const product = availableProducts.find((p: any) => 
-                p.id === item.id || 
-                p.name.toLowerCase().includes(item.id.toLowerCase()) ||
-                item.id.toLowerCase().includes(p.name.toLowerCase())
-              );
+              // Buscar producto por ID o por nombre (normalizado)
+              const itemId = String(item.id).toLowerCase().trim().replace(/\s+/g, '_');
+              const product = availableProducts.find((p: any) => {
+                const pId = String(p.id).toLowerCase().trim();
+                const pName = String(p.name || '').toLowerCase().trim().replace(/\s+/g, '_');
+                return pId === itemId || 
+                       pName === itemId ||
+                       pName.includes(itemId) ||
+                       itemId.includes(pName);
+              });
               
               if (product) {
                 validatedProducts.push({
                   id: product.id,
                   quantity: item.quantity || 1
                 });
+                console.log(`✅ Producto validado: "${item.id}" → "${product.id}" (${product.name})`);
               } else {
+                console.warn(`⚠️ Producto no encontrado: "${item.id}"`);
               }
             }
           }
           
           if (validatedProducts.length > 0) {
             parsed.extractedData.products = validatedProducts;
+            // También en español para normalización
+            parsed.extractedData.productos = validatedProducts;
             console.log(`✅ Total productos validados: ${validatedProducts.length}`);
           } else {
             // No se validó ningún producto, marcar como faltante
