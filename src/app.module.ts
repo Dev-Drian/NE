@@ -19,6 +19,7 @@ import { ProductsModule } from './products/products.module';
 import { ResourcesModule } from './resources/resources.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { CommonModule } from './common/common.module';
+import { CategoriesModule } from './categories/categories.module';
 import { ServicesModule } from './services/services.module';
 import { GlobalSettingsModule } from './global-settings/global-settings.module';
 
@@ -64,6 +65,7 @@ import { GlobalSettingsModule } from './global-settings/global-settings.module';
     ResourcesModule,
     InventoryModule,
     ServicesModule,
+    CategoriesModule,
   ],
   providers: [
     // Guard global de Rate Limiting

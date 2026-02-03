@@ -9,6 +9,7 @@ import { seedServiceKeywords } from './seeds/seed-keywords';
 import { seedRestaurantIntentions, seedClinicIntentions } from './seeds/seed-intentions';
 import { seedMessageTemplates } from './seeds/seed-templates';
 import { seedTestUsers } from './seeds/seed-users';
+import { seedGlobalCategories } from './seeds/seed-categories';
 
 const prisma = new PrismaClient();
 
@@ -30,10 +31,14 @@ async function main() {
   await prisma.intentionPattern.deleteMany();
   await prisma.intention.deleteMany();
   await prisma.serviceKeyword.deleteMany();
-  await prisma.service.deleteMany();  // ← NUEVO: Limpiar servicios
+  await prisma.service.deleteMany();
+  await prisma.category.deleteMany();  // ← NUEVO: Limpiar categorías
   await prisma.user.deleteMany();
   await prisma.company.deleteMany();
   await prisma.messageTemplateConfig.deleteMany();
+
+  // Crear categorías globales primero
+  await seedGlobalCategories(prisma);
 
   // ========== CREAR EMPRESA: RESTAURANTE ==========
   const company = await prisma.company.create({

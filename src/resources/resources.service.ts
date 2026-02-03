@@ -8,12 +8,19 @@ export class ResourcesService {
   /**
    * Obtener todos los recursos de una empresa
    */
-  async findByCompany(companyId: string, includeInactive = false) {
+  async findByCompany(companyId: string, includeInactive = false, includeCompany = false) {
     return this.prisma.resource.findMany({
       where: {
         companyId,
         active: includeInactive ? undefined : true,
       },
+      ...(includeCompany && {
+        include: {
+          company: {
+            select: { id: true, name: true, slug: true },
+          },
+        },
+      }),
       orderBy: [
         { type: 'asc' },
         { capacity: 'asc' },

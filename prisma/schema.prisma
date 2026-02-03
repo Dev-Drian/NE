@@ -113,6 +113,7 @@ model Company {
   conversationLogs ConversationLog[]
   userPreferences  UserPreference[]
   services         Service[]
+  categories       Category[]
 
   @@map("companies")
 }
@@ -329,6 +330,40 @@ model SystemKeyword {
 // ============================================
 // NUEVAS TABLAS: PRODUCTOS Y RECURSOS
 // ============================================
+
+model Category {
+  id          String   @id @default(uuid())
+  companyId   String?  // null = categoría global del sistema
+  company     Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  
+  name        String
+  key         String   // Slug o identificador único (ej: "food", "drink", "dental")
+  description String?
+  icon        String?  // Emoji o nombre de icono
+  color       String?  // Color hex para UI
+  
+  // Tipo de entidad a la que aplica
+  entityType  EntityType // PRODUCT, SERVICE, RESOURCE
+  
+  // Para ordenar en UI
+  displayOrder Int @default(0)
+  
+  active      Boolean @default(true)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@index([companyId])
+  @@index([entityType])
+  @@index([key, entityType])
+  @@map("categories")
+}
+
+enum EntityType {
+  PRODUCT
+  SERVICE
+  RESOURCE
+}
 
 model Product {
   id        String  @id @default(uuid())

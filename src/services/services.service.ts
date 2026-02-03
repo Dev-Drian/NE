@@ -59,12 +59,14 @@ export class ServicesService {
   /**
    * Obtener todos los servicios activos de una empresa
    */
-  async getServicesByCompany(companyId: string): Promise<ServiceWithConfig[]> {
-    // Verificar cache
-    const cached = this.cache.get(companyId);
-    if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
-      this.logger.debug(`📦 Cache hit para servicios de empresa ${companyId.slice(0, 8)}...`);
-      return cached.services;
+  async getServicesByCompany(companyId: string, includeCompany = false): Promise<ServiceWithConfig[]> {
+    // Verificar cache (solo si no se incluye company, para evitar problemas con cache)
+    if (!includeCompany) {
+      const cached = this.cache.get(companyId);
+      if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
+        this.logger.debug(`📦 Cache hit para servicios de empresa ${companyId.slice(0, 8)}...`);
+        return cached.services;
+      }
     }
 
     this.logger.debug(`🔍 Cargando servicios de BD para empresa ${companyId.slice(0, 8)}...`);
@@ -74,6 +76,13 @@ export class ServicesService {
         companyId,
         active: true,
       },
+      ...(includeCompany && {
+        include: {
+          company: {
+            select: { id: true, name: true, slug: true },
+          },
+        },
+      }),
       orderBy: { displayOrder: 'asc' },
     });
 

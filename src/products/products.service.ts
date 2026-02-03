@@ -14,13 +14,20 @@ export class ProductsService {
   /**
    * Obtener todos los productos de una empresa (activos y disponibles)
    */
-  async findByCompany(companyId: string, includeInactive = false) {
+  async findByCompany(companyId: string, includeInactive = false, includeCompany = false) {
     return this.prisma.product.findMany({
       where: {
         companyId,
         active: includeInactive ? undefined : true,
         available: includeInactive ? undefined : true,
       },
+      ...(includeCompany && {
+        include: {
+          company: {
+            select: { id: true, name: true, slug: true },
+          },
+        },
+      }),
       orderBy: [
         { category: 'asc' },
         { name: 'asc' },
