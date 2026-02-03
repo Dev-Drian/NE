@@ -16,10 +16,65 @@ import { UsersService } from '../../../users/users.service';
 import { ConversationsService } from '../../../conversations/conversations.service';
 import { DateHelper } from '../../../common/date-helper';
 import { ResourceValidatorService } from '../../services/resource-validator.service';
+import { ServicesService } from '../../../services/services.service';
+
+/**
+ * Normaliza campos de inglés a español para display al usuario.
+ * NOTA: Internamente mantenemos los campos en inglés (date, time, guests, etc.)
+ * para compatibilidad con el código existente.
+ * Si OpenAI devuelve campos en español, los convertimos a inglés.
+ */
+function normalizeFieldNames(data: Record<string, any>): Record<string, any> {
+  // Mapeo de campos en español (de OpenAI) a inglés (interno)
+  // Esto asegura que siempre trabajamos con nombres consistentes internamente
+  const spanishToEnglish: Record<string, string> = {
+    fecha: 'date',
+    hora: 'time',
+    personas: 'guests',
+    telefono: 'phone',
+    nombre: 'name',
+    direccion: 'address',
+    productos: 'products',
+    mesa: 'tableId',
+    notas: 'notes',
+    servicio: 'service',
+  };
+
+  const result: Record<string, any> = {};
+  
+  for (const [key, value] of Object.entries(data)) {
+    // Convertir campos en español a inglés si es necesario
+    const normalizedKey = spanishToEnglish[key.toLowerCase()] || key;
+    
+    // Si ya existe el campo, no sobrescribir (prioridad al primero)
+    if (!result[normalizedKey] || result[normalizedKey] === null || result[normalizedKey] === undefined) {
+      result[normalizedKey] = value;
+    }
+  }
+  
+  return result;
+}
 
 @Injectable()
 export class ReservationFlowService {
   private readonly logger = new Logger(ReservationFlowService.name);
+
+  /**
+   * Obtiene emoji apropiado según el tipo de servicio
+   */
+  private getServiceEmoji(serviceKey: string): string {
+    const key = serviceKey?.toLowerCase() || '';
+    if (key.includes('domicilio') || key.includes('delivery') || key.includes('envio')) return '🚚';
+    if (key.includes('mesa') || key.includes('restaurante')) return '🍽️';
+    if (key.includes('cita') || key.includes('consulta') || key.includes('medic')) return '🏥';
+    if (key.includes('spa') || key.includes('belleza') || key.includes('masaje')) return '💆';
+    if (key.includes('compra') || key.includes('tienda') || key.includes('online')) return '🛒';
+    if (key.includes('apartado') || key.includes('reserv')) return '📦';
+    if (key.includes('personal') || key.includes('shopping') || key.includes('asesori')) return '👔';
+    if (key.includes('alteracion') || key.includes('arreglo') || key.includes('costura')) return '✂️';
+    if (key.includes('disponibilidad') || key.includes('stock')) return '🔍';
+    return '✨';
+  }
 
   constructor(
     private messagesTemplates: MessagesTemplatesService,
@@ -36,6 +91,7 @@ export class ReservationFlowService {
     private usersService: UsersService,
     private conversations: ConversationsService,
     private resourceValidator: ResourceValidatorService,
+    private servicesService: ServicesService,
   ) {}
 
   async handleReservation(
@@ -51,12 +107,47 @@ export class ReservationFlowService {
     );
 
     const config = (company?.config as any) || {};
-    const availableServices = config?.services || {};
-    const hasMultipleServices = Object.keys(availableServices).length > 1;
+    
+    // ===== CARGAR SERVICIOS DESDE BD =====
+    // Los servicios ahora están en tabla dedicada, no en config JSON
+    const dbServices = await this.servicesService.getAvailableServices(dto.companyId);
+    this.logger.log(`📋 Servicios cargados de BD: ${dbServices.length} servicios → ${dbServices.map(s => s.key).join(', ') || '(vacío)'}`);
+    
+    // Convertir a formato compatible con el código existente (key -> config)
+    const availableServices: Record<string, any> = {};
+    for (const svc of dbServices) {
+      const svcConfig = svc.config || {};
+      availableServices[svc.key] = {
+        name: svc.name,
+        description: svc.description,
+        enabled: svc.available,
+        requiresProducts: (svcConfig as any).requiresProducts || false,
+        requiresAddress: (svcConfig as any).requiresAddress || false,
+        requiresGuests: (svcConfig as any).requiresGuests || (svcConfig as any).minGuests > 0,
+        requiresPhone: (svcConfig as any).requiresPhone !== false, // default true
+        keywords: svc.keywords || [],
+        ...svcConfig,
+      };
+    }
+    
+    // Fallback: si no hay servicios en BD, usar config JSON (compatibilidad hacia atrás)
+    if (Object.keys(availableServices).length === 0 && config?.services) {
+      this.logger.warn('⚠️ No hay servicios en BD, usando config JSON (deprecado)');
+      Object.assign(availableServices, config.services);
+    }
+    
+    const serviceKeys = Object.keys(availableServices);
+    this.logger.log(`🔑 Service keys disponibles: ${serviceKeys.join(', ') || '(ninguno)'}`);
+    
+    const hasMultipleServices = serviceKeys.length > 1;
 
     const previousData = { ...context.collectedData };
 
-    const extracted = detection.extractedData || {};
+    // Normalizar campos de inglés a español
+    const rawExtracted = detection.extractedData || {};
+    this.logger.log(`📨 Datos extraídos (raw): ${JSON.stringify(rawExtracted)}`);
+    const extracted = normalizeFieldNames(rawExtracted);
+    this.logger.log(`📨 Datos extraídos (normalized): ${JSON.stringify(extracted)}`);
     
     // Detectar si el usuario quiere REEMPLAZAR (palabras como "solo", "mejor", "entonces")
     const wantsToReplace = /\b(solo|solamente|mejor|entonces|cambiar|cambia|quiero|dame|pon|ponme)\b/i.test(dto.message);
@@ -67,10 +158,11 @@ export class ReservationFlowService {
       Object.entries(extracted).filter(([key, value]) => {
         if (value === null || value === undefined) return false;
         // No sobreescribir productos existentes con array vacío
-        if (key === 'products' && Array.isArray(value) && value.length === 0) return false;
+        if ((key === 'products' || key === 'productos') && Array.isArray(value) && value.length === 0) return false;
         return true;
       }),
     );
+    this.logger.log(`📨 Datos extraídos (filtered): ${JSON.stringify(filteredExtracted)}`);
     
     // Manejar merge de productos de OpenAI de forma especial
     let mergedProductsFromAI: any[] | undefined;
@@ -144,15 +236,88 @@ export class ReservationFlowService {
     // ===== VALIDAR Y CORREGIR SERVICIO =====
     // Si el servicio extraído no es válido (ej: "Consulta general" en lugar de "cita"),
     // intentar corregirlo
-    const serviceKeys = Object.keys(availableServices);
+    // (serviceKeys ya está definido arriba)
+    
+    // PRIMERO: Intentar detectar servicio desde el mensaje del usuario
+    // Esto es útil cuando el usuario responde con el nombre del servicio
+    if (!collected.service || !availableServices[collected.service]) {
+      const normalizedMessage = this.textUtils.normalizeText(dto.message.toLowerCase());
+      
+      // Buscar si el mensaje menciona algún servicio disponible por nombre o key
+      for (const [key, svcConfig] of Object.entries(availableServices)) {
+        const svc = svcConfig as any;
+        const serviceName = this.textUtils.normalizeText((svc.name || '').toLowerCase());
+        const serviceKey = this.textUtils.normalizeText(key.toLowerCase());
+        
+        // Verificar si el mensaje contiene el nombre del servicio o su key
+        if (serviceName && normalizedMessage.includes(serviceName)) {
+          collected.service = key;
+          this.logger.log(`✅ Servicio detectado por nombre: "${svc.name}" → ${key}`);
+          break;
+        }
+        if (normalizedMessage.includes(serviceKey)) {
+          collected.service = key;
+          this.logger.log(`✅ Servicio detectado por key: ${key}`);
+          break;
+        }
+        
+        // También verificar palabras clave comunes
+        const keywords = svc.keywords || [];
+        for (const kw of keywords) {
+          if (normalizedMessage.includes(this.textUtils.normalizeText(kw.toLowerCase()))) {
+            collected.service = key;
+            this.logger.log(`✅ Servicio detectado por keyword "${kw}": ${key}`);
+            break;
+          }
+        }
+        if (collected.service) break;
+      }
+    }
     
     if (collected.service && !availableServices[collected.service]) {
-      // El servicio extraído no es válido, podría ser el nombre de un producto
+      // El servicio extraído no es válido (puede ser el nombre en lugar de la key)
       this.logger.log(`⚠️ Servicio "${collected.service}" no es válido. Servicios disponibles: ${serviceKeys.join(', ')}`);
       
-      // Si solo hay un servicio disponible, usarlo
-      if (serviceKeys.length === 1) {
-        this.logger.log(`🔄 Corrigiendo servicio a: ${serviceKeys[0]}`);
+      // PRIMERO: Intentar buscar por nombre del servicio (OpenAI a veces devuelve el nombre bonito)
+      const normalizedServiceName = this.textUtils.normalizeText((collected.service || '').toLowerCase());
+      let foundByName = false;
+      
+      for (const [key, svcConfig] of Object.entries(availableServices)) {
+        const svc = svcConfig as any;
+        const serviceName = this.textUtils.normalizeText((svc.name || '').toLowerCase());
+        const serviceKey = this.textUtils.normalizeText(key.toLowerCase());
+        
+        // Comparar con el nombre del servicio
+        if (serviceName && normalizedServiceName === serviceName) {
+          collected.service = key;
+          this.logger.log(`✅ Servicio corregido por nombre exacto: "${svc.name}" → ${key}`);
+          foundByName = true;
+          break;
+        }
+        
+        // Comparar si el nombre contiene o está contenido en el servicio extraído
+        if (serviceName && (normalizedServiceName.includes(serviceName) || serviceName.includes(normalizedServiceName))) {
+          collected.service = key;
+          this.logger.log(`✅ Servicio corregido por nombre parcial: "${svc.name}" → ${key}`);
+          foundByName = true;
+          break;
+        }
+        
+        // Comparar con la key normalizada (ej: "personal shopping" vs "personal_shopping")
+        const normalizedKey = serviceKey.replace(/_/g, ' ');
+        if (normalizedServiceName === normalizedKey || normalizedServiceName.replace(/\s+/g, '_') === serviceKey) {
+          collected.service = key;
+          this.logger.log(`✅ Servicio corregido por key normalizada: ${key}`);
+          foundByName = true;
+          break;
+        }
+      }
+      
+      if (foundByName) {
+        // Ya se corrigió, continuar
+      } else if (serviceKeys.length === 1) {
+        // Si solo hay un servicio disponible, usarlo
+        this.logger.log(`🔄 Corrigiendo servicio a único disponible: ${serviceKeys[0]}`);
         collected.service = serviceKeys[0];
       } else {
         // Buscar si el servicio extraído coincide con algún producto desde BD
@@ -182,9 +347,26 @@ export class ReservationFlowService {
           collected.service = serviceKeys[0];
           this.logger.log(`✅ Servicio único asignado (default): ${collected.service}`);
         } else {
-          // No podemos determinar el servicio, limpiarlo
+          // No podemos determinar el servicio - MOSTRAR OPCIONES INMEDIATAMENTE
           delete collected.service;
-          this.logger.log(`⚠️ Servicio "${extracted.service}" inválido, se preguntará al usuario`);
+          this.logger.log(`⚠️ Servicio "${extracted.service}" inválido para esta empresa. Mostrando opciones...`);
+          
+          // Construir lista de servicios disponibles para mostrar al usuario
+          const servicesList = serviceKeys.map((key) => {
+            const svc = availableServices[key];
+            const emoji = this.getServiceEmoji(key);
+            return `${emoji} **${svc?.name || key}**${svc?.description ? ` - ${svc.description}` : ''}`;
+          }).join('\n');
+          
+          return {
+            reply: `📋 Estos son nuestros servicios disponibles:\n\n${servicesList}\n\n¿Cuál te interesa? 😊`,
+            newState: {
+              ...context,
+              collectedData: { ...collected, service: undefined },
+              stage: 'collecting',
+              lastIntention: 'reservar',
+            },
+          };
         }
       }
     }
@@ -224,12 +406,21 @@ export class ReservationFlowService {
       delete newData.service; // No es dato "nuevo"
     }
 
-    // Regla: si dice que NO quiere domicilio, pasar a mesa (si existe)
-    const noQuiereDomicilio = this.keywordDetector.doesNotWantDelivery(dto.message);
-    if (noQuiereDomicilio && collected.service === 'domicilio' && availableServices['mesa']) {
-      collected.service = 'mesa';
-      newData.service = 'mesa';
-      if (collected.products) delete collected.products;
+    // Regla: si dice que NO quiere delivery, buscar servicio alternativo sin dirección
+    const noQuiereDelivery = this.keywordDetector.doesNotWantDelivery(dto.message);
+    const currentServiceConfig = collected.service ? availableServices[collected.service] : null;
+    if (noQuiereDelivery && currentServiceConfig?.requiresAddress) {
+      // Buscar un servicio que NO requiera dirección (ej: mesa, cita presencial)
+      const alternativeService = serviceKeys.find(key => !availableServices[key]?.requiresAddress);
+      if (alternativeService) {
+        this.logger.log(`🔄 Usuario no quiere delivery, cambiando a: ${alternativeService}`);
+        collected.service = alternativeService;
+        newData.service = alternativeService;
+        // Limpiar productos solo si el nuevo servicio no los requiere
+        if (!availableServices[alternativeService]?.requiresProducts && collected.products) {
+          delete collected.products;
+        }
+      }
     }
 
     // Mapear productos/tratamientos a IDs del catálogo con cantidades
@@ -295,16 +486,14 @@ export class ReservationFlowService {
         // Si hay productos, preferir un servicio que requiera productos (si no hay uno aún)
         const currentService = collected.service;
         const currentRequiresProducts = currentService ? availableServices[currentService]?.requiresProducts : false;
-        const canSwitchToDomicilio = availableServices['domicilio']?.requiresProducts === true;
-        const canSwitchToCita = availableServices['cita']?.requiresProducts === true;
 
         if (!currentService || !currentRequiresProducts) {
-          if (canSwitchToDomicilio) {
-            collected.service = 'domicilio';
-            newData.service = 'domicilio';
-          } else if (canSwitchToCita) {
-            collected.service = 'cita';
-            newData.service = 'cita';
+          // Buscar dinámicamente CUALQUIER servicio que requiera productos
+          const serviceWithProducts = serviceKeys.find(key => availableServices[key]?.requiresProducts === true);
+          if (serviceWithProducts) {
+            this.logger.log(`🔄 Productos detectados, asignando servicio: ${serviceWithProducts}`);
+            collected.service = serviceWithProducts;
+            newData.service = serviceWithProducts;
           }
         }
       }
@@ -313,14 +502,22 @@ export class ReservationFlowService {
       const mentionsDelivery = this.keywordDetector.mentionsDelivery(dto.message);
       const mentionsFood = this.keywordDetector.mentionsFood(dto.message);
 
-      const currentService = collected.service;
-      const currentRequiresProducts = currentService ? availableServices[currentService]?.requiresProducts : false;
-      const canSwitchToDomicilio = availableServices['domicilio']?.requiresProducts === true;
+      const currentService2 = collected.service;
+      const currentRequiresProducts2 = currentService2 ? availableServices[currentService2]?.requiresProducts : false;
 
-      if (!currentService || !currentRequiresProducts) {
-        if (canSwitchToDomicilio && (foundProducts.length > 0 || mentionsDelivery || mentionsFood)) {
-          collected.service = 'domicilio';
-          newData.service = 'domicilio';
+      if (!currentService2 || !currentRequiresProducts2) {
+        // Buscar dinamicamente servicio con productos
+        const serviceWithProducts2 = serviceKeys.find(key => {
+          const svc = availableServices[key];
+          if (!svc?.requiresProducts) return false;
+          if (mentionsDelivery && svc.requiresAddress) return true;
+          return true;
+        });
+        
+        if (serviceWithProducts2 && (foundProducts.length > 0 || mentionsDelivery || mentionsFood)) {
+          this.logger.log('Heuristica extra: asignando servicio ' + serviceWithProducts2);
+          collected.service = serviceWithProducts2;
+          newData.service = serviceWithProducts2;
         }
       }
     }
@@ -349,13 +546,33 @@ export class ReservationFlowService {
     // Calcular missing fields (con contexto histórico)
     const missing = await this.serviceValidator.calculateMissingFields(collected, resolution.validatorConfig, context);
 
-    // Si hay múltiples servicios y aún no hay service, pedirlo
+    // Si hay múltiples servicios y aún no hay service, MOSTRAR OPCIONES PRIMERO
+    // NOTA: Internamente usamos 'service' pero para el usuario mostramos 'servicio'
     if (resolution.hasMultipleServices && !collected.service) {
-      if (!missing.includes('service')) missing.push('service');
+      // En lugar de agregar 'servicio' a missing, mostrar opciones inmediatamente
+      const servicesList = serviceKeys.map((key) => {
+        const svc = availableServices[key];
+        const emoji = this.getServiceEmoji(key);
+        return `${emoji} **${svc?.name || key}**${svc?.description ? ` - ${svc.description}` : ''}`;
+      }).join('\n');
+      
+      return {
+        reply: `📋 ¡Perfecto! Estos son nuestros servicios:\n\n${servicesList}\n\n¿Cuál te interesa? 😊`,
+        newState: {
+          ...context,
+          collectedData: collected,
+          stage: 'collecting',
+          lastIntention: 'reservar',
+          metadata: {
+            ...context.metadata,
+            waitingForService: true, // Marcar que estamos esperando selección de servicio
+          },
+        },
+      };
     }
 
-    // VALIDACIÓN ESPECIAL: Domicilio requiere productos
-    if (collected.service === 'domicilio' && resolution.validatorConfig.requiresProducts) {
+    // VALIDACIÓN: Si el servicio requiere productos, verificar que los tenga
+    if (resolution.validatorConfig.requiresProducts) {
       const hasProducts = collected.products && Array.isArray(collected.products) && collected.products.length > 0;
       if (!hasProducts && !missing.includes('products')) {
         // Insertar 'products' al INICIO del array para pedir productos primero
@@ -364,7 +581,17 @@ export class ReservationFlowService {
     }
     
     if (missing.length > 0) {
-      const missingFieldsSpanish = missing.map((f) => resolution.missingFieldLabels[f] || f);
+      // Mapear campos a español y filtrar vacíos
+      const missingFieldsSpanish = missing
+        .map((f) => resolution.missingFieldLabels[f] || f)
+        .filter((label) => label && label.trim().length > 0);
+      
+      // Verificar que realmente hay campos faltantes después del filtro
+      if (missingFieldsSpanish.length === 0) {
+        this.logger.warn(`⚠️ missing tenía ${missing.length} campos pero todos fueron filtrados: ${JSON.stringify(missing)}`);
+        // Usar los campos originales como fallback
+        missingFieldsSpanish.push(...missing);
+      }
 
       // ENFOQUE HÍBRIDO: Preguntar todos la primera vez, luego uno a uno
       const hasAskedAllFields = context.metadata?.hasAskedAllFields || false;
@@ -373,29 +600,35 @@ export class ReservationFlowService {
       
       if (missing.length === 1) {
         // Solo falta 1 campo → preguntar ese específico (más natural)
+        const svcConfig = collected.service ? availableServices[collected.service] : null;
         reply = await this.askForSingleField(
           missing[0],
           collected,
           newData,
           resolution.missingFieldLabels[missing[0]] || missing[0],
           companyType,
+          svcConfig,
         );
       } else if (!hasAskedAllFields) {
         // Primera vez con múltiples campos faltantes → preguntar todos de una vez
+        const svcConfig = collected.service ? availableServices[collected.service] : null;
         reply = await this.askForAllFields(
           missingFieldsSpanish,
           collected,
           newData,
           companyType,
+          svcConfig,
         );
       } else {
         // Ya preguntamos todos antes → preguntar el primero que falta (uno a uno)
+        const svcConfig = collected.service ? availableServices[collected.service] : null;
         reply = await this.askForSingleField(
           missing[0],
           collected,
           newData,
           resolution.missingFieldLabels[missing[0]] || missing[0],
           companyType,
+          svcConfig,
         );
       }
 
@@ -422,6 +655,58 @@ export class ReservationFlowService {
     // Guests default si no es requerido
     if (!resolution.validatorConfig.requiresGuests && !collected.guests) {
       collected.guests = settings.defaultGuests || 1;
+    }
+
+    // ===== VERIFICAR CAMPOS OPCIONALES =====
+    // Si todos los requeridos están completos, ofrecer preguntar campos opcionales
+    const optionalFields = resolution.validatorConfig.optionalFields || [];
+    const pendingOptional = this.serviceValidator.getOptionalFieldsPending(collected, resolution.validatorConfig);
+    const hasAskedOptional = context.metadata?.hasAskedOptionalFields || false;
+    const userDeclinedOptional = context.metadata?.userDeclinedOptionalFields || false;
+    
+    // Solo preguntar opcionales si:
+    // 1. Hay campos opcionales pendientes
+    // 2. No hemos preguntado aún
+    // 3. El usuario no ha declinado
+    // 4. El mensaje actual no parece un "no" o similar
+    const skipOptionalKeywords = /\b(no|skip|omitir|saltar|ninguno|nada|sin|continuar|confirmar|listo)\b/i;
+    const userWantsToSkip = skipOptionalKeywords.test(dto.message);
+    
+    if (pendingOptional.length > 0 && !hasAskedOptional && !userDeclinedOptional && !userWantsToSkip) {
+      const optionalLabels = pendingOptional.map((f) => resolution.missingFieldLabels[f] || f);
+      const svcConfig = collected.service ? availableServices[collected.service] : null;
+      
+      // Construir pregunta amigable para campos opcionales
+      let reply = `✅ ¡Tengo toda la info necesaria!\n\n`;
+      reply += `📋 Opcionalmente, puedes indicarme:\n`;
+      optionalLabels.forEach((label, i) => {
+        reply += `   ${i + 1}. ${label}\n`;
+      });
+      reply += `\n💡 Si prefieres continuar sin estos datos, escribe "continuar" o "listo".`;
+      
+      return {
+        reply,
+        newState: {
+          ...context,
+          collectedData: collected,
+          stage: 'collecting_optional',
+          lastIntention: 'reservar',
+          metadata: {
+            ...context.metadata,
+            hasAskedOptionalFields: true,
+            pendingOptionalFields: pendingOptional,
+          },
+        },
+        missingFields: [], // No son requeridos
+      };
+    }
+    
+    // Si el usuario quiso saltar opcionales, marcar como declinado
+    if (userWantsToSkip && context.stage === 'collecting_optional') {
+      context.metadata = {
+        ...context.metadata,
+        userDeclinedOptionalFields: true,
+      };
     }
 
     // Validar disponibilidad
@@ -518,10 +803,15 @@ export class ReservationFlowService {
       };
     }
 
-    // ===== VALIDACIÓN DE CITAS MÉDICAS OCUPADAS =====
-    // Para servicios de tipo "cita", SIEMPRE verificar que el horario no esté ocupado por otra cita
-    if (collected.service === 'cita') {
-      this.logger.log(`🔍 Validando disponibilidad de cita: ${collected.date} ${collected.time}`);
+    // ===== VALIDACIÓN DE CITAS/APPOINTMENTS OCUPADAS =====
+    // Para servicios que requieren verificación de disponibilidad de cita (config.requiresAppointmentCheck)
+    const selectedServiceConfig = collected.service ? availableServices[collected.service] : null;
+    const requiresAppointmentCheck = selectedServiceConfig?.requiresAppointmentCheck || 
+                                      selectedServiceConfig?.isAppointmentBased ||
+                                      (selectedServiceConfig?.name || '').toLowerCase().includes('cita');
+    
+    if (requiresAppointmentCheck) {
+      this.logger.log(`🔍 Validando disponibilidad de cita/appointment: ${collected.date} ${collected.time}`);
       const productId = collected.products?.[0]?.id;
       const appointmentCheck = await this.availability.checkAppointmentAvailability(
         dto.companyId,
@@ -674,17 +964,25 @@ export class ReservationFlowService {
           let paymentUrl: string | null = null;
           let reservationId: string | null = context.metadata?.reservationId || null;
           
+          // Obtener serviceId desde la BD si hay un service key
+          let serviceIdForPayment: string | undefined;
+          if (collected.service) {
+            const serviceRecord = await this.servicesService.getServiceByKey(dto.companyId, collected.service);
+            serviceIdForPayment = serviceRecord?.id;
+          }
+          
           // SIEMPRE crear reserva si no existe una para este pedido
           if (!reservationId) {
             const reservation = await this.reservations.create({
               company: { connect: { id: dto.companyId } },
+              ...(serviceIdForPayment && { serviceRef: { connect: { id: serviceIdForPayment } } }),
               userId: dto.userId,
               date: collected.date!,
               time: collected.time!,
               guests: collected.guests || settings.defaultGuests || 1,
               phone: collected.phone,
               name: collected.name,
-              service: collected.service,
+              service: collected.service, // Mantener key por compatibilidad
               status: 'pending', // Pendiente hasta que se confirme el pago
               metadata: {
                 products: collected.products,
@@ -694,12 +992,12 @@ export class ReservationFlowService {
               },
             });
             reservationId = reservation.id;
-            this.logger.log(`✅ Reserva creada con ID: ${reservationId}, status: pending`);
+            this.logger.log(`✅ Reserva creada con ID: ${reservationId}, serviceId: ${serviceIdForPayment || 'N/A'}, status: pending`);
             
             // ===== DESCONTAR STOCK INMEDIATAMENTE AL CREAR PEDIDO =====
             // El stock se reserva aunque el pago esté pendiente
             // Si el pago es rechazado, se devolverá el stock
-            if (collected.service === 'domicilio' && collected.products && collected.products.length > 0) {
+            if (resolution.validatorConfig.requiresProducts && collected.products && collected.products.length > 0) {
               try {
                 await this.resourceValidator.decrementProductStock(
                   dto.companyId,
@@ -788,16 +1086,26 @@ export class ReservationFlowService {
 
     // ===== CREAR RESERVA =====
     this.logger.log(`📝 Creando reserva con servicio: ${collected.service}`);
+    
+    // Obtener serviceId desde la BD si hay un service key
+    let serviceId: string | undefined;
+    if (collected.service) {
+      const serviceRecord = await this.servicesService.getServiceByKey(dto.companyId, collected.service);
+      serviceId = serviceRecord?.id;
+      this.logger.debug(`🔗 ServiceId resuelto: ${serviceId || 'N/A'} para key: ${collected.service}`);
+    }
+    
     try {
       const reservation = await this.reservations.create({
         company: { connect: { id: dto.companyId } },
+        ...(serviceId && { serviceRef: { connect: { id: serviceId } } }), // Conectar con Service si existe
         userId: dto.userId,
         date: collected.date!,
         time: collected.time!,
         guests: collected.guests || settings.defaultGuests || 1,
         phone: collected.phone,
         name: collected.name,
-        service: collected.service,
+        service: collected.service, // Mantener key por compatibilidad
         status: 'confirmed',
         metadata: {
           products: collected.products,
@@ -807,25 +1115,31 @@ export class ReservationFlowService {
         },
       });
 
-      // Descontar stock de productos después de crear la reserva
-      if (collected.service === 'domicilio' && collected.products && collected.products.length > 0) {
+      // Descontar stock de productos después de crear la reserva (si el servicio requiere productos)
+      if (resolution.validatorConfig.requiresProducts && collected.products && collected.products.length > 0) {
         try {
           await this.resourceValidator.decrementProductStock(
             dto.companyId,
             collected.products
           );
+          this.logger.log(`📦 Stock descontado: ${collected.products.length} producto(s)`);
         } catch (error) {
           this.logger.warn('Error descontando stock de productos:', error);
           // No fallar la reserva si hay error al descontar stock
         }
       }
 
-      // Obtener el nombre del tratamiento/producto específico (para citas médicas)
+      // Obtener el nombre del tratamiento/producto específico (si el servicio tiene productos)
       let productName: string | undefined;
-      if (collected.service === 'cita' && collected.products && collected.products.length > 0) {
+      const serviceConf = collected.service ? availableServices[collected.service] : null;
+      const showProductName = serviceConf?.showProductInConfirmation || serviceConf?.isAppointmentBased || serviceConf?.requiresAppointmentCheck;
+      if (showProductName && collected.products && collected.products.length > 0) {
         const productId = collected.products[0]?.id;
-        const catalogProducts = config?.products || [];
-        const product = catalogProducts.find((p: any) => p.id === productId);
+        // Buscar en BD primero, luego en config
+        const dbProduct = catalogProducts.find((p: any) => p.id === productId);
+        const configProducts = config?.products || [];
+        const configProduct = configProducts.find((p: any) => p.id === productId);
+        const product = dbProduct || configProduct;
         if (product) {
           productName = product.name;
         }
@@ -852,12 +1166,17 @@ export class ReservationFlowService {
 
       // VALIDACIÓN: NUNCA retornar respuesta vacía
       if (!reply || reply.trim().length === 0) {
-        // Usar el tipo correcto según el servicio
-        let confirmType = 'Reserva confirmada';
-        if (collected.service === 'domicilio') {
-          confirmType = 'Pedido confirmado';
-        } else if (collected.service === 'cita') {
-          confirmType = 'Cita confirmada';
+        // Determinar terminología según config del servicio
+        const svcConf = collected.service ? availableServices[collected.service] : null;
+        let confirmType = svcConf?.confirmationText || 'Reserva confirmada';
+        
+        // Fallback inteligente si no hay config específico
+        if (!svcConf?.confirmationText) {
+          if (svcConf?.requiresAddress) {
+            confirmType = 'Pedido confirmado';
+          } else if (svcConf?.isAppointmentBased || svcConf?.requiresAppointmentCheck) {
+            confirmType = 'Cita confirmada';
+          }
         }
         reply = `✅ ¡${confirmType}! Te esperamos. 😊`;
       }
@@ -894,10 +1213,13 @@ export class ReservationFlowService {
     newData: any,
     fieldLabel: string,
     companyType: string,
+    serviceConfig?: any,
   ): Promise<string> {
     const terminology = await this.messagesTemplates.getTerminology(companyType);
-    const isDomicilio = collected.service === 'domicilio';
-    const reservationType = isDomicilio ? 'pedido' : terminology.reservation;
+    // Determinar tipo de reserva dinámicamente desde config del servicio
+    const reservationType = serviceConfig?.reservationNoun || 
+                            (serviceConfig?.requiresAddress ? 'pedido' : 
+                            (serviceConfig?.isAppointmentBased ? 'cita' : terminology.reservation));
 
     // Construir confirmación de datos que ya tenemos
     const confirmedParts: string[] = [];
@@ -973,10 +1295,13 @@ export class ReservationFlowService {
     collected: any,
     newData: any,
     companyType: string,
+    serviceConfig?: any,
   ): Promise<string> {
     const terminology = await this.messagesTemplates.getTerminology(companyType);
-    const isDomicilio = collected.service === 'domicilio';
-    const reservationType = isDomicilio ? 'pedido' : terminology.reservation;
+    // Determinar tipo de reserva dinámicamente desde config del servicio
+    const reservationType = serviceConfig?.reservationNoun || 
+                            (serviceConfig?.requiresAddress ? 'pedido' : 
+                            (serviceConfig?.isAppointmentBased ? 'cita' : terminology.reservation));
 
     const parts: string[] = [];
 
@@ -994,8 +1319,21 @@ export class ReservationFlowService {
       const peopleText = newData.guests === 1 ? terminology.person : terminology.people;
       receivedParts.push(`👥 ${newData.guests} ${peopleText}`);
     }
-    if (newData.phone) {
+    if (newData.phone && newData.phone !== 'null' && newData.phone !== null) {
       receivedParts.push(`📱 Teléfono: ${newData.phone}`);
+    }
+    
+    // También mostrar datos previamente recopilados si no son nuevos
+    if (!newData.date && collected.date) {
+      const dateReadable = DateHelper.formatDateReadable(collected.date);
+      receivedParts.push(`📅 Fecha: ${dateReadable}`);
+    }
+    if (!newData.time && collected.time) {
+      const timeReadable = DateHelper.formatTimeReadable(collected.time);
+      receivedParts.push(`🕐 Hora: ${timeReadable}`);
+    }
+    if (!newData.phone && collected.phone && collected.phone !== 'null' && collected.phone !== null) {
+      receivedParts.push(`📱 Teléfono: ${collected.phone}`);
     }
 
     if (receivedParts.length > 0) {
@@ -1018,6 +1356,9 @@ export class ReservationFlowService {
         return `${index + 1}. ¿Qué productos deseas?`;
       } else if (fieldLower.includes('dirección') || fieldLower.includes('direccion') || fieldLower === 'address') {
         return `${index + 1}. ¿Cuál es la dirección de entrega?`;
+      } else if (fieldLower.includes('servicio') || fieldLower === 'service') {
+        // Mostrar servicios disponibles si llegamos aquí
+        return `${index + 1}. servicio (escribe el nombre del servicio que deseas)`;
       } else {
         return `${index + 1}. ${field}`;
       }

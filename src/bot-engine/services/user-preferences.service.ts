@@ -124,8 +124,9 @@ export class UserPreferencesService {
         favoriteProducts = favoriteProducts.slice(0, 10);
       }
 
-      // Determinar si es reserva o pedido
-      const isOrder = reservationData.service === 'domicilio';
+      // Determinar si es reserva o pedido basado en si requiere dirección (delivery)
+      // En lugar de comparar con 'domicilio', verificamos si tiene dirección o si el servicio requiere entrega
+      const isOrder = !!reservationData.address;
 
       await this.prisma.userPreference.update({
         where: { id: prefs.id },
@@ -262,8 +263,10 @@ export class UserPreferencesService {
       });
     }
 
-    // Sugerir dirección para domicilios
-    if (serviceKey === 'domicilio' && context.address) {
+    // Sugerir dirección para servicios que requieran delivery/envio
+    // En lugar de verificar 'domicilio', verificamos si el serviceKey sugiere delivery
+    const isDeliveryService = serviceKey && (serviceKey.includes('domicilio') || serviceKey.includes('delivery') || serviceKey.includes('envio'));
+    if (isDeliveryService && context.address) {
       suggestions.push({
         field: 'address',
         value: context.address,

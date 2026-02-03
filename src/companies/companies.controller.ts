@@ -261,6 +261,48 @@ export class CompaniesController {
   generateSlug(@Body('name') name: string) {
     return { slug: this.companiesService.generateSlug(name) };
   }
+
+  // Obtener TODOS los clientes (solo super admin)
+  @UseGuards(RolesGuard)
+  @Roles(AdminRole.SUPER_ADMIN)
+  @Get('customers/all')
+  async getAllCustomers() {
+    return this.companiesService.getAllCustomers();
+  }
+
+  // Obtener clientes de una empresa
+  @UseGuards(RolesGuard)
+  @Roles(AdminRole.SUPER_ADMIN, AdminRole.COMPANY_ADMIN)
+  @Get(':id/customers')
+  async getCustomers(@Param('id') id: string, @CurrentUser() user: any) {
+    // Si no es super admin, solo puede ver clientes de su empresa
+    if (user.role !== AdminRole.SUPER_ADMIN && user.companyId !== id) {
+      return { data: [], message: 'No tienes acceso a esta empresa' };
+    }
+
+    return this.companiesService.getCustomers(id);
+  }
+
+  // Obtener historial de conversaciones de una empresa
+  @UseGuards(RolesGuard)
+  @Roles(AdminRole.SUPER_ADMIN, AdminRole.COMPANY_ADMIN)
+  @Get(':id/conversation-logs')
+  async getConversationLogs(
+    @Param('id') id: string, 
+    @CurrentUser() user: any,
+    @Query('limit') limit?: string,
+    @Query('userId') userId?: string,
+  ) {
+    // Si no es super admin, solo puede ver conversaciones de su empresa
+    if (user.role !== AdminRole.SUPER_ADMIN && user.companyId !== id) {
+      return { data: [], message: 'No tienes acceso a esta empresa' };
+    }
+
+    return this.companiesService.getConversationLogs(id, {
+      limit: limit ? parseInt(limit) : 100,
+      userId,
+    });
+  }
 }
 
 

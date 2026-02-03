@@ -120,11 +120,12 @@ export class EntityNormalizerService {
     const now = new Date();
     const lowerMessage = message.toLowerCase();
 
-    // Patrones relativos: hoy, mañana, pasado mañana
+    // Patrones relativos: hoy, mañana, pasado mañana (con variantes de typos)
     const relativePatterns = [
       { pattern: /\b(hoy|ahora|ahorita)\b/gi, dayOffset: 0 },
-      { pattern: /\b(mañana)\b/gi, dayOffset: 1 },
-      { pattern: /\b(pasado\s*mañana)\b/gi, dayOffset: 2 },
+      // mañana con variantes: mañana, amñana, amañana, manana, maana, etc.
+      { pattern: /\b(ma[ñn]ana|ama[ñn]ana|am[ñn]ana|maana|ma[ñn]a)\b/gi, dayOffset: 1 },
+      { pattern: /\b(pasado\s*ma[ñn]ana|pasadoma[ñn]ana)\b/gi, dayOffset: 2 },
       { pattern: /\b(ayer)\b/gi, dayOffset: -1 },
     ];
 
@@ -189,22 +190,54 @@ export class EntityNormalizerService {
       }
     }
 
-    // Horas: "3pm", "3:00 pm", "a las 3", "15:00"
+    // Horas: "3pm", "3:00 pm", "a las 3", "15:00", "a las 8 de la noche"
     const timePatterns = [
-      // 3pm, 3:00pm, 3:00 pm
+      // 3pm, 3:00pm, 3:00 pm, 7 pm (número + am/pm, sin "a las")
       { 
         pattern: /\b(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.?m\.?|p\.?m\.?)\b/gi, 
         extract: (m: RegExpMatchArray) => this.parse12HourTime(parseInt(m[1]), parseInt(m[2] || '0'), m[3])
       },
-      // "a las 3", "a las 3 y media"
+      // "a las 7 pm", "a las 3 am", "a las 8 y media pm" - con am/pm explícito
       { 
-        pattern: /\ba\s*las?\s+(\d{1,2})(?:\s*y\s*(media|cuarto))?\b/gi, 
+        pattern: /\ba\s*las?\s+(\d{1,2})(?::(\d{2}))?(?:\s*y\s*(media|cuarto))?\s*(am|pm|a\.?m\.?|p\.?m\.?)\b/gi, 
+        extract: (m: RegExpMatchArray) => {
+          let hours = parseInt(m[1]);
+          let minutes = m[2] ? parseInt(m[2]) : 0;
+          if (m[3] === 'media') minutes = 30;
+          if (m[3] === 'cuarto') minutes = 15;
+          return this.parse12HourTime(hours, minutes, m[4]);
+        }
+      },
+      // "a las 8 de la noche/mañana/tarde" - con indicador de periodo
+      { 
+        pattern: /\ba\s*las?\s+(\d{1,2})(?::(\d{2}))?(?:\s*y\s*(media|cuarto))?\s*(?:de\s+la\s+)?(mañana|ma[ñn]ana|tarde|noche)\b/gi, 
+        extract: (m: RegExpMatchArray) => {
+          let hours = parseInt(m[1]);
+          let minutes = m[2] ? parseInt(m[2]) : 0;
+          if (m[3] === 'media') minutes = 30;
+          if (m[3] === 'cuarto') minutes = 15;
+          const period = (m[4] || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+          
+          // Ajustar según el periodo del día
+          if (period === 'noche' && hours < 12) {
+            hours += 12; // 8 de la noche → 20:00
+          } else if (period === 'tarde' && hours < 12) {
+            hours += 12; // 3 de la tarde → 15:00
+          }
+          // mañana: no ajustar (10 de la mañana = 10:00)
+          
+          return { hours, minutes };
+        }
+      },
+      // "a las 3", "a las 3 y media" - sin indicador de periodo (heurística)
+      { 
+        pattern: /\ba\s*las?\s+(\d{1,2})(?:\s*y\s*(media|cuarto))?\b(?!\s*(?:de\s+la\s+)?(?:mañana|tarde|noche|am|pm|a\.?m\.?|p\.?m\.?))/gi, 
         extract: (m: RegExpMatchArray) => {
           let hours = parseInt(m[1]);
           let minutes = 0;
           if (m[2] === 'media') minutes = 30;
           if (m[2] === 'cuarto') minutes = 15;
-          // Si es < 7, asumir PM
+          // Si es < 7, asumir PM (heurística para reservas)
           if (hours < 7) hours += 12;
           return { hours, minutes };
         }

@@ -299,7 +299,11 @@ export class ReasoningEngineService {
 
     // Verificar si la fecha/hora está dentro del horario del negocio
     if (extracted.date && extracted.time) {
-      const dayOfWeek = new Date(extracted.date).toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
+      // IMPORTANTE: Usar formato local para evitar problemas de timezone
+      // new Date('2026-02-03') sin hora se interpreta como UTC, causando días incorrectos
+      const [year, month, day] = extracted.date.split('-').map(Number);
+      const localDate = new Date(year, month - 1, day); // Crear fecha en timezone local
+      const dayOfWeek = localDate.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
       const businessHours = config?.hours?.[dayOfWeek];
 
       if (!businessHours) {
@@ -312,14 +316,22 @@ export class ReasoningEngineService {
       }
 
       // Verificar si la hora está dentro del rango
+      // NOTA: Comparación de strings HH:MM funciona lexicográficamente (ej: "19:00" > "12:00" y < "22:00")
       const [openTime, closeTime] = businessHours.split('-').map((t: string) => t.trim());
-      if (extracted.time < openTime || extracted.time > closeTime) {
-        reasoning.push(`Hora ${extracted.time} fuera del horario ${businessHours}`);
-        return {
-          reasoning,
-          suggestion: `Ese horario está fuera de nuestro horario de atención (${businessHours}). ¿Te parece otra hora?`,
-          shouldSuggest: true,
-        };
+      const extractedTime = extracted.time; // Ya debe estar en formato HH:MM
+      
+      // Verificar formato válido antes de comparar
+      if (extractedTime && /^\d{2}:\d{2}$/.test(extractedTime)) {
+        if (extractedTime < openTime || extractedTime > closeTime) {
+          reasoning.push(`Hora ${extractedTime} fuera del horario ${businessHours}`);
+          return {
+            reasoning,
+            suggestion: `Ese horario está fuera de nuestro horario de atención (${businessHours}). ¿Te parece otra hora?`,
+            shouldSuggest: true,
+          };
+        }
+      } else {
+        reasoning.push(`Formato de hora no válido: ${extractedTime}, saltando validación de horario`);
       }
     }
 

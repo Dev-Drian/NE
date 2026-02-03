@@ -1,6 +1,23 @@
 import { PrismaClient } from '@prisma/client';
 
 /**
+ * CAMPOS ESTÁNDAR EN INGLÉS (consistente con código interno y Prisma):
+ * - date: Fecha de la reserva/cita
+ * - time: Hora de la reserva/cita  
+ * - guests: Número de personas/comensales
+ * - phone: Teléfono de contacto
+ * - name: Nombre del cliente
+ * - email: Correo electrónico
+ * - address: Dirección de entrega/ubicación
+ * - products: Productos a ordenar
+ * - tableId: Mesa específica
+ * - notes: Notas o comentarios adicionales
+ * - service: Tipo de servicio específico
+ * 
+ * NOTA: OpenAI puede devolver campos en español, el sistema los normaliza a inglés
+ */
+
+/**
  * Seed de servicios para el restaurante
  * Servicios: mesa, domicilio, para recoger
  */
@@ -13,8 +30,8 @@ export async function seedRestaurantServices(prisma: PrismaClient, companyId: st
       key: 'mesa',
       name: 'Reserva de Mesa',
       description: 'Reserva una mesa en nuestro restaurante para disfrutar de nuestra carta',
-      requiredFields: ['fecha', 'hora', 'personas'],
-      optionalFields: ['notas', 'ocasion', 'preferencia_mesa'],
+      requiredFields: ['date', 'time', 'guests'],
+      optionalFields: ['notes', 'occasion', 'tablePreference'],
       allowedProductCategories: ['food', 'drink', 'dessert', 'appetizer', 'main', 'entrada', 'principal', 'postre', 'bebida'],
       config: {
         minGuests: 1,
@@ -38,8 +55,8 @@ export async function seedRestaurantServices(prisma: PrismaClient, companyId: st
       key: 'domicilio',
       name: 'Domicilio',
       description: 'Pedido a domicilio - Te llevamos la comida a tu casa',
-      requiredFields: ['direccion', 'telefono', 'productos'],
-      optionalFields: ['notas', 'metodo_pago', 'hora_entrega'],
+      requiredFields: ['address', 'phone', 'products'],
+      optionalFields: ['notes', 'paymentMethod', 'deliveryTime'],
       allowedProductCategories: ['food', 'drink', 'dessert', 'appetizer', 'main', 'entrada', 'principal', 'postre', 'bebida'],
       config: {
         minOrderAmount: 25000,
@@ -62,8 +79,8 @@ export async function seedRestaurantServices(prisma: PrismaClient, companyId: st
       key: 'recoger',
       name: 'Para Recoger',
       description: 'Pedido para recoger en el restaurante',
-      requiredFields: ['hora_recogida', 'telefono', 'productos'],
-      optionalFields: ['notas', 'nombre'],
+      requiredFields: ['time', 'phone', 'products'],
+      optionalFields: ['notes', 'name'],
       allowedProductCategories: ['food', 'drink', 'dessert', 'appetizer', 'main', 'entrada', 'principal', 'postre', 'bebida'],
       config: {
         minOrderAmount: 15000,
@@ -102,8 +119,8 @@ export async function seedClinicServices(prisma: PrismaClient, companyId: string
       key: 'limpieza_dental',
       name: 'Limpieza Dental',
       description: 'Limpieza dental profesional con ultrasonido',
-      requiredFields: ['fecha', 'hora'],
-      optionalFields: ['notas', 'primera_vez'],
+      requiredFields: ['date', 'time'],
+      optionalFields: ['notes', 'first_time'],
       allowedProductCategories: [], // No tiene productos asociados
       config: {
         duration: 45, // minutos
@@ -124,8 +141,8 @@ export async function seedClinicServices(prisma: PrismaClient, companyId: string
       key: 'consulta_general',
       name: 'Consulta General',
       description: 'Consulta dental general, diagnóstico y plan de tratamiento',
-      requiredFields: ['fecha', 'hora'],
-      optionalFields: ['sintomas', 'notas', 'urgente'],
+      requiredFields: ['date', 'time'],
+      optionalFields: ['symptoms', 'notes', 'urgent'],
       allowedProductCategories: [],
       config: {
         duration: 30,
@@ -145,8 +162,8 @@ export async function seedClinicServices(prisma: PrismaClient, companyId: string
       key: 'blanqueamiento',
       name: 'Blanqueamiento Dental',
       description: 'Blanqueamiento dental profesional con láser',
-      requiredFields: ['fecha', 'hora'],
-      optionalFields: ['notas', 'tipo_blanqueamiento'],
+      requiredFields: ['date', 'time'],
+      optionalFields: ['notes', 'whitening_type'],
       allowedProductCategories: [],
       config: {
         duration: 90,
@@ -167,8 +184,8 @@ export async function seedClinicServices(prisma: PrismaClient, companyId: string
       key: 'ortodoncia',
       name: 'Consulta de Ortodoncia',
       description: 'Evaluación para tratamiento de ortodoncia (brackets o invisalign)',
-      requiredFields: ['fecha', 'hora'],
-      optionalFields: ['tipo_tratamiento', 'notas'],
+      requiredFields: ['date', 'time'],
+      optionalFields: ['treatment_type', 'notes'],
       allowedProductCategories: [],
       config: {
         duration: 60,
@@ -189,8 +206,8 @@ export async function seedClinicServices(prisma: PrismaClient, companyId: string
       key: 'extraccion',
       name: 'Extracción Dental',
       description: 'Extracción dental simple o de cordales',
-      requiredFields: ['fecha', 'hora'],
-      optionalFields: ['pieza_dental', 'notas', 'cordal'],
+      requiredFields: ['date', 'time'],
+      optionalFields: ['tooth', 'notes', 'wisdom_tooth'],
       allowedProductCategories: [],
       config: {
         duration: 45,
@@ -233,8 +250,8 @@ export async function seedSpaServices(prisma: PrismaClient, companyId: string) {
       key: 'masaje_relajante',
       name: 'Masaje Relajante',
       description: 'Masaje corporal completo de relajación (60 min)',
-      requiredFields: ['fecha', 'hora'],
-      optionalFields: ['terapeuta', 'notas'],
+      requiredFields: ['date', 'time'],
+      optionalFields: ['therapist', 'notes'],
       allowedProductCategories: [],
       config: {
         duration: 60,
@@ -254,8 +271,8 @@ export async function seedSpaServices(prisma: PrismaClient, companyId: string) {
       key: 'facial',
       name: 'Tratamiento Facial',
       description: 'Limpieza facial profunda con hidratación',
-      requiredFields: ['fecha', 'hora'],
-      optionalFields: ['tipo_piel', 'notas'],
+      requiredFields: ['date', 'time'],
+      optionalFields: ['skin_type', 'notes'],
       allowedProductCategories: [],
       config: {
         duration: 45,
@@ -297,8 +314,8 @@ export async function seedChaletServices(prisma: PrismaClient, companyId: string
       key: 'alquiler_dia',
       name: 'Alquiler por Día',
       description: 'Alquiler de la finca completa por un día (pasadía) - Incluye piscina, BBQ y zonas comunes',
-      requiredFields: ['fecha', 'personas', 'telefono'],
-      optionalFields: ['hora_llegada', 'hora_salida', 'notas', 'servicios_adicionales'],
+      requiredFields: ['date', 'guests', 'phone'],
+      optionalFields: ['arrival_time', 'departure_time', 'notes', 'additional_services'],
       allowedProductCategories: ['servicio_adicional', 'catering', 'decoracion'],
       config: {
         minGuests: 1,
@@ -326,8 +343,8 @@ export async function seedChaletServices(prisma: PrismaClient, companyId: string
       key: 'alquiler_finde',
       name: 'Alquiler Fin de Semana',
       description: 'Alquiler viernes a domingo - 2 noches con todas las amenidades',
-      requiredFields: ['fecha_entrada', 'fecha_salida', 'personas', 'telefono'],
-      optionalFields: ['hora_llegada', 'notas', 'servicios_adicionales', 'mascotas'],
+      requiredFields: ['date', 'guests', 'phone'],
+      optionalFields: ['arrival_time', 'notes', 'additional_services', 'pets'],
       allowedProductCategories: ['servicio_adicional', 'catering', 'decoracion', 'transporte'],
       config: {
         minGuests: 1,
@@ -359,8 +376,8 @@ export async function seedChaletServices(prisma: PrismaClient, companyId: string
       key: 'alquiler_semana',
       name: 'Alquiler Semanal',
       description: 'Alquiler por 7 noches - Ideal para vacaciones familiares',
-      requiredFields: ['fecha_entrada', 'fecha_salida', 'personas', 'telefono'],
-      optionalFields: ['hora_llegada', 'notas', 'servicios_adicionales', 'mascotas'],
+      requiredFields: ['date', 'guests', 'phone'],
+      optionalFields: ['arrival_time', 'notes', 'additional_services', 'pets'],
       allowedProductCategories: ['servicio_adicional', 'catering', 'decoracion', 'transporte'],
       config: {
         minGuests: 1,
@@ -394,8 +411,8 @@ export async function seedChaletServices(prisma: PrismaClient, companyId: string
       key: 'evento_especial',
       name: 'Evento Especial',
       description: 'Alquiler para eventos: cumpleaños, matrimonios, reuniones corporativas',
-      requiredFields: ['fecha', 'tipo_evento', 'personas', 'telefono'],
-      optionalFields: ['hora_inicio', 'hora_fin', 'decoracion', 'catering', 'musica', 'notas'],
+      requiredFields: ['date', 'guests', 'phone', 'event_type'],
+      optionalFields: ['start_time', 'end_time', 'decoration', 'catering', 'music', 'notes'],
       allowedProductCategories: ['servicio_adicional', 'catering', 'decoracion', 'entretenimiento'],
       config: {
         minGuests: 10,
@@ -447,7 +464,7 @@ export async function seedClothingStoreServices(prisma: PrismaClient, companyId:
       name: 'Compra en Tienda',
       description: 'Visita nuestra tienda física para ver y probarte la ropa',
       requiredFields: [],
-      optionalFields: ['fecha_visita', 'hora_visita', 'asesoria'],
+      optionalFields: ['visit_date', 'visit_time', 'advisory'],
       allowedProductCategories: ['camisas', 'pantalones', 'vestidos', 'faldas', 'blusas', 'chaquetas', 'accesorios', 'zapatos', 'ropa_interior'],
       config: {
         hasOnlineStore: true,
@@ -467,8 +484,8 @@ export async function seedClothingStoreServices(prisma: PrismaClient, companyId:
       key: 'compra_online',
       name: 'Compra Online / Domicilio',
       description: 'Haz tu pedido y te lo enviamos a domicilio',
-      requiredFields: ['direccion', 'telefono', 'productos'],
-      optionalFields: ['metodo_pago', 'notas', 'talla', 'regalo'],
+      requiredFields: ['address', 'phone', 'products'],
+      optionalFields: ['payment_method', 'notes', 'size', 'gift'],
       allowedProductCategories: ['camisas', 'pantalones', 'vestidos', 'faldas', 'blusas', 'chaquetas', 'accesorios', 'zapatos', 'ropa_interior'],
       config: {
         minOrderAmount: 50000,
@@ -493,8 +510,8 @@ export async function seedClothingStoreServices(prisma: PrismaClient, companyId:
       key: 'apartado',
       name: 'Apartado de Prendas',
       description: 'Aparta tu prenda favorita con un pequeño adelanto',
-      requiredFields: ['productos', 'telefono'],
-      optionalFields: ['notas', 'plazo_dias'],
+      requiredFields: ['products', 'phone'],
+      optionalFields: ['notes', 'hold_days'],
       allowedProductCategories: ['camisas', 'pantalones', 'vestidos', 'faldas', 'blusas', 'chaquetas', 'accesorios', 'zapatos'],
       config: {
         minDeposit: 30, // porcentaje
@@ -514,8 +531,8 @@ export async function seedClothingStoreServices(prisma: PrismaClient, companyId:
       key: 'personal_shopping',
       name: 'Personal Shopping',
       description: 'Asesoría personalizada de moda con nuestros estilistas',
-      requiredFields: ['fecha', 'hora', 'telefono'],
-      optionalFields: ['presupuesto', 'ocasion', 'estilo', 'notas'],
+      requiredFields: ['date', 'time', 'phone'],
+      optionalFields: ['budget', 'occasion', 'style', 'notes'],
       allowedProductCategories: ['camisas', 'pantalones', 'vestidos', 'faldas', 'blusas', 'chaquetas', 'accesorios', 'zapatos'],
       config: {
         duration: 60, // minutos
@@ -537,8 +554,8 @@ export async function seedClothingStoreServices(prisma: PrismaClient, companyId:
       key: 'alteraciones',
       name: 'Alteraciones / Arreglos',
       description: 'Servicio de ajustes y arreglos de prendas',
-      requiredFields: ['tipo_arreglo', 'telefono'],
-      optionalFields: ['fecha_entrega', 'notas', 'prenda'],
+      requiredFields: ['alteration_type', 'phone'],
+      optionalFields: ['delivery_date', 'notes', 'garment'],
       allowedProductCategories: [],
       config: {
         minDeliveryDays: 3,
@@ -558,8 +575,8 @@ export async function seedClothingStoreServices(prisma: PrismaClient, companyId:
       key: 'consulta_disponibilidad',
       name: 'Consulta de Disponibilidad',
       description: 'Pregunta si tenemos la prenda que buscas en tu talla',
-      requiredFields: ['producto', 'talla'],
-      optionalFields: ['color', 'telefono'],
+      requiredFields: ['product', 'size'],
+      optionalFields: ['color', 'phone'],
       allowedProductCategories: ['camisas', 'pantalones', 'vestidos', 'faldas', 'blusas', 'chaquetas', 'accesorios', 'zapatos', 'ropa_interior'],
       config: {
         responseTimeHours: 2,

@@ -42,8 +42,9 @@ export class ResourceValidatorService {
 
     const result: ResourceValidationResult = { isValid: true };
 
-    // 1. VALIDAR Y ASIGNAR MESA (si es servicio de mesa)
-    if (service === 'mesa' || serviceConfig?.requiresTable) {
+    // 1. VALIDAR Y ASIGNAR MESA (si el servicio requiere mesa según config)
+    // Usamos serviceConfig?.requiresTable en lugar de comparar con 'mesa'
+    if (serviceConfig?.requiresTable) {
       const tableResult = await this.validateTable(
         resources,
         data.tableId,

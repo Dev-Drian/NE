@@ -142,6 +142,13 @@ export class ReservationsService {
       where,
       include: {
         company: true,
+        serviceRef: {
+          select: {
+            id: true,
+            name: true,
+            key: true,
+          },
+        },
       },
       orderBy: {
         createdAt: 'desc',
@@ -154,6 +161,13 @@ export class ReservationsService {
       where: { id },
       include: {
         company: true,
+        serviceRef: {
+          select: {
+            id: true,
+            name: true,
+            key: true,
+          },
+        },
       },
     });
   }

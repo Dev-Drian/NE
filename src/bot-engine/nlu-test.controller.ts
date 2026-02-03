@@ -1,8 +1,10 @@
-import { Controller, Post, Body, Get } from '@nestjs/common';
+import { Controller, Post, Body, Get, Query } from '@nestjs/common';
 import { SpellCheckerService } from './utils/spell-checker.service';
 import { SynonymService } from './utils/synonym.service';
 import { EntityNormalizerService } from './utils/entity-normalizer.service';
 import { LearningService } from './services/learning.service';
+import { BotEngineService } from './bot-engine.service';
+import { UsersService } from '../users/users.service';
 import { Public } from '../auth/decorators/public.decorator';
 
 /**
@@ -25,6 +27,8 @@ export class NluTestController {
     private readonly synonymService: SynonymService,
     private readonly entityNormalizer: EntityNormalizerService,
     private readonly learningService: LearningService,
+    private readonly botEngine: BotEngineService,
+    private readonly usersService: UsersService,
   ) {}
 
   /**
@@ -169,5 +173,62 @@ export class NluTestController {
         entities: entities.entities.length,
       };
     });
+  }
+
+  /**
+   * Chat de prueba con el bot
+   * 
+   * POST /api/nlu/chat
+   * Body: { "companyId": "uuid", "message": "hola quiero reservar", "phone": "+573001234567" }
+   * 
+   * Permite probar el bot completo desde el panel de admin
+   */
+  @Post('chat')
+  async testChat(@Body() body: { companyId: string; message: string; phone?: string }) {
+    const phone = body.phone || `test_${Date.now()}`;
+    
+    // Crear o encontrar usuario de prueba
+    const user = await this.usersService.findOrCreate(phone, {
+      phone,
+      name: 'Usuario de Prueba',
+    });
+
+    // Procesar mensaje con el bot
+    const result = await this.botEngine.processMessage({
+      companyId: body.companyId,
+      userId: user.id,
+      phone: user.phone,
+      message: body.message,
+    });
+
+    return {
+      success: true,
+      userId: user.id,
+      phone: user.phone,
+      userMessage: body.message,
+      botReply: result.reply,
+      intention: result.intention,
+      confidence: result.confidence,
+      conversationState: result.conversationState,
+      conversationId: result.conversationId,
+      missingFields: result.missingFields,
+    };
+  }
+
+  /**
+   * Resetear conversación de prueba
+   * 
+   * POST /api/nlu/chat/reset
+   * Body: { "phone": "+573001234567" }
+   */
+  @Post('chat/reset')
+  async resetTestChat(@Body() body: { phone: string }) {
+    // Simplemente devolver que se reinició
+    // La próxima conversación empezará fresh ya que usaremos un nuevo ID
+    return {
+      success: true,
+      message: `Conversación reseteada. Use un nuevo teléfono o el mismo para continuar.`,
+      suggestion: `Nuevo teléfono sugerido: test_${Date.now()}`,
+    };
   }
 }

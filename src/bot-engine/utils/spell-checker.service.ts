@@ -54,6 +54,12 @@ const COMMON_TYPOS: Record<string, string> = {
   'mañan': 'mañana',
   'manana': 'mañana',
   'manan': 'mañana',
+  'amñana': 'mañana',
+  'amañana': 'mañana',
+  'mñana': 'mañana',
+  'maana': 'mañana',
+  'maña': 'mañana',
+  'amnana': 'mañana',
   'pasadomañana': 'pasado mañana',
   'lunes': 'lunes',
   'martes': 'martes',
@@ -273,6 +279,22 @@ export class SpellCheckerService implements OnModuleInit {
         'ser', 'estar', 'tener', 'hacer', 'ir', 'venir', 'poder',
         'hoy', 'mañana', 'ayer', 'ahora', 'después', 'antes',
         'muy', 'más', 'menos', 'bien', 'mal', 'mucho', 'poco',
+        // Palabras de reservas y negocios
+        'reservar', 'reserva', 'reservación', 'cita', 'mesa', 'hora',
+        'fecha', 'personas', 'persona', 'comensales', 'para', 'quiero',
+        'necesito', 'quisiera', 'agendar', 'cancelar', 'confirmar',
+        'teléfono', 'telefono', 'número', 'numero', 'dirección', 'direccion',
+        'pedido', 'domicilio', 'envío', 'envio', 'entrega',
+        'pagar', 'pago', 'precio', 'costo', 'total',
+        // Días de la semana
+        'lunes', 'martes', 'miércoles', 'miercoles', 'jueves', 
+        'viernes', 'sábado', 'sabado', 'domingo',
+        // Horas
+        'mediodía', 'mediodia', 'noche', 'tarde', 'madrugada',
+        // Servicios comunes
+        'compra', 'tienda', 'online', 'apartado', 'personal', 
+        'shopping', 'asesoría', 'asesoria', 'alteraciones', 'arreglos',
+        'disponibilidad', 'consulta', 'consultar',
       ];
       commonWords.forEach(w => this.vocabulary.add(w));
       
@@ -371,6 +393,13 @@ export class SpellCheckerService implements OnModuleInit {
       'kiero agendar': 'quiero agendar',
       'pa mañana': 'para mañana',
       'pa hoy': 'para hoy',
+      'par mañana': 'para mañana',
+      'par amañana': 'para mañana',
+      'par amñana': 'para mañana',
+      'para amañana': 'para mañana',
+      'para amñana': 'para mañana',
+      'al as': 'a las',
+      'alas': 'a las',
       'ya pague': 'ya pagué',
       'ya page': 'ya pagué',
     };

@@ -247,17 +247,28 @@ export class BotEngineService {
       // 6. DETECTAR SI EL USUARIO QUIERE EMPEZAR UNA NUEVA CONVERSACIÓN
       // Si hay una conversación en progreso (collecting), verificar si quiere empezar algo nuevo
       if (context.stage === 'collecting' && context.lastIntention) {
-        const isNewConversation = await this.detectNewConversation(
-          dto.message,
-          context.lastIntention,
-          context.collectedData
+        // EXCEPCIÓN: Si el usuario solo escribe "reservar" o similar, NO es nueva conversación
+        // sino que está continuando con la actual (probablemente frustrado o confundido)
+        const messageLower = dto.message.toLowerCase().trim();
+        const isSameIntentionRepeat = (
+          (context.lastIntention === 'reservar' && /^(reservar|quiero\s+reservar|hacer\s+(una\s+)?reserva)$/i.test(messageLower)) ||
+          (context.lastIntention === 'cancelar' && /^(cancelar|quiero\s+cancelar)$/i.test(messageLower))
         );
         
-        if (isNewConversation) {
-          this.logger.log('🔄 Nueva conversación detectada. Guardando contexto actual y reseteando...');
+        if (isSameIntentionRepeat) {
+          this.logger.log(`🔄 Usuario repitió la intención "${context.lastIntention}" - continuando con flujo actual`);
+        } else {
+          const isNewConversation = await this.detectNewConversation(
+            dto.message,
+            context.lastIntention,
+            context.collectedData
+          );
           
-          // GUARDAR contexto actual antes de resetear (por si quiere volver)
-          const savedContext = {
+          if (isNewConversation) {
+            this.logger.log('🔄 Nueva conversación detectada. Guardando contexto actual y reseteando...');
+            
+            // GUARDAR contexto actual antes de resetear (por si quiere volver)
+            const savedContext = {
             stage: context.stage,
             collectedData: { ...context.collectedData },
             lastIntention: context.lastIntention,
@@ -286,6 +297,7 @@ export class BotEngineService {
           Object.assign(context, newContext);
           
           this.logger.log('✅ Contexto reseteado. Iniciando nueva conversación. (Anterior guardado por si quiere volver)');
+          }
         }
       }
 
@@ -970,7 +982,11 @@ export class BotEngineService {
           let serviceType = 'pedidos y reservas';
           
           if (asksDomicilios) {
-            filteredItems = allItems.filter(r => r.service === 'domicilio');
+            // Filtrar por servicios que tienen dirección (delivery/domicilio)
+            filteredItems = allItems.filter(r => {
+              const metadata = r.metadata as any;
+              return metadata?.address || r.service?.includes('domicilio') || r.service?.includes('delivery');
+            });
             serviceType = 'domicilios';
           }
           
@@ -1118,7 +1134,8 @@ export class BotEngineService {
             // Pago aprobado - confirmar pedido
             // NOTA: El stock ya fue descontado cuando se creó el pedido con status 'pending'
             const service = context.collectedData?.service;
-            const isDelivery = service === 'domicilio';
+            // Determinar si es delivery por la presencia de dirección en los datos
+            const isDelivery = !!context.collectedData?.address;
             const confirmationType = isDelivery ? 'pedido' : 'reserva';
             
             // Actualizar reserva a "confirmed" si existe
@@ -1154,7 +1171,8 @@ export class BotEngineService {
             if (!updatedPayment.wompiTransactionId) {
               // El usuario aún no ha completado el pago en el enlace
               const service = context.collectedData?.service;
-              const isDelivery = service === 'domicilio';
+              // Determinar si es delivery por la presencia de dirección
+              const isDelivery = !!context.collectedData?.address;
               const orderType = isDelivery ? 'pedido' : 'reserva';
               
               reply = `⏳ Veo que aún no has completado el pago en el enlace.\n\nPor favor ingresa al siguiente enlace para realizar el pago del 50% y confirmar tu ${orderType}:\n\n🔗 ${updatedPayment.paymentUrl}\n\nCuando hayas completado el pago, escríbeme "ya pagué" y verificaré el estado. ✅`;
@@ -1174,11 +1192,13 @@ export class BotEngineService {
           } else if (updatedPayment.status === 'DECLINED' || updatedPayment.status === 'ERROR') {
             // Pago rechazado - RESTAURAR STOCK
             const service = context.collectedData?.service;
-            const isDelivery = service === 'domicilio';
+            // Determinar si es delivery por la presencia de dirección
+            const isDelivery = !!context.collectedData?.address;
             const orderType = isDelivery ? 'pedido' : 'reserva';
             
             // ===== RESTAURAR STOCK DE PRODUCTOS SI PAGO FUE RECHAZADO =====
-            if (isDelivery && context.collectedData?.products && context.collectedData.products.length > 0) {
+            // Restaurar stock si hay productos, independiente del tipo de servicio
+            if (context.collectedData?.products && context.collectedData.products.length > 0) {
               try {
                 await this.resourceValidator.restoreProductStock(
                   dto.companyId,
@@ -1243,7 +1263,8 @@ export class BotEngineService {
         
         if (pendingPayment && pendingPayment.paymentUrl) {
           const service = context.collectedData?.service;
-          const isDelivery = service === 'domicilio';
+          // Determinar si es delivery por la presencia de dirección
+          const isDelivery = !!context.collectedData?.address;
           const orderType = isDelivery ? 'pedido' : 'reserva';
           
           reply = `⚠️ Recuerda que tienes un pago pendiente para confirmar tu ${orderType}.\n\n🔗 Completa el pago aquí: ${pendingPayment.paymentUrl}\n\nCuando hayas pagado, escríbeme "ya pagué" para verificar. 😊`;
@@ -1281,29 +1302,50 @@ export class BotEngineService {
       
       // Si el reasoning detecta que necesita clarificación, responder primero
       if (reasoningResult.decision === 'ask_clarification' && reasoningResult.clarificationNeeded) {
+        // IMPORTANTE: Guardar los datos extraídos en collectedData ANTES de retornar
+        // Esto evita que se pierdan los datos cuando el reasoning interrumpe el flujo
+        const updatedContext = {
+          ...context,
+          collectedData: { ...context.collectedData, ...detection.extractedData },
+          stage: 'collecting' as const,
+          lastIntention: detection.intention,
+        };
         await this.contextCache.invalidateContext(contextKey);
-        await this.conversations.saveContext(userId, dto.companyId, context);
+        await this.conversations.saveContext(userId, dto.companyId, updatedContext);
         await this.conversations.addMessage(userId, dto.companyId, 'assistant', reasoningResult.clarificationNeeded);
         
         return {
           reply: reasoningResult.clarificationNeeded,
           intention: detection.intention,
           confidence: reasoningResult.confidence,
-          conversationState: context.stage,
+          conversationState: updatedContext.stage,
         };
       }
       
       // Si sugiere alternativa, ofrecerla
       if (reasoningResult.decision === 'suggest_alternative' && reasoningResult.alternativeSuggestion) {
+        // IMPORTANTE: Guardar los datos extraídos (excepto el campo problemático) ANTES de retornar
+        // Por ejemplo: si la hora está fuera de rango, guardar fecha/servicio/etc pero no la hora inválida
+        const dataToSave = { ...detection.extractedData };
+        // Si el problema es de horario, remover la hora para que la vuelva a pedir
+        if (reasoningResult.reasoning.some(r => r.includes('fuera del horario'))) {
+          delete dataToSave.time;
+        }
+        const updatedContext = {
+          ...context,
+          collectedData: { ...context.collectedData, ...dataToSave },
+          stage: 'collecting' as const,
+          lastIntention: detection.intention,
+        };
         await this.contextCache.invalidateContext(contextKey);
-        await this.conversations.saveContext(userId, dto.companyId, context);
+        await this.conversations.saveContext(userId, dto.companyId, updatedContext);
         await this.conversations.addMessage(userId, dto.companyId, 'assistant', reasoningResult.alternativeSuggestion);
         
         return {
           reply: reasoningResult.alternativeSuggestion,
           intention: detection.intention,
           confidence: reasoningResult.confidence,
-          conversationState: context.stage,
+          conversationState: updatedContext.stage,
         };
       }
       
@@ -1355,11 +1397,14 @@ export class BotEngineService {
     // 13. ========== CAPA COGNITIVA: SELF-CHECK ==========
     // Verificar y auto-corregir la respuesta ANTES de enviarla
     try {
+      // IMPORTANTE: Usar newState.collectedData (actualizado) no context.collectedData (viejo)
+      const currentCollectedData = newState.collectedData || context.collectedData || {};
+      
       const selfCheckResult = await this.selfCheck.checkResponse({
         proposedResponse: reply,
         userMessage: dto.message,
         conversationHistory: context.conversationHistory?.map(m => m.content) || [],
-        collectedData: context.collectedData || {},
+        collectedData: currentCollectedData,
         intention: detection.intention,
       });
       
@@ -1679,6 +1724,13 @@ Responde ÚNICAMENTE: true o false`;
   ): DetectionResult {
     const entityExtraction = this.entityNormalizer.extractAll(message);
     
+    // Log de entidades extraídas (siempre visible para debugging)
+    this.logger.log(`🔍 EntityNormalizer extracción para "${message}":`);
+    this.logger.log(`   hasEntities: ${entityExtraction.hasEntities}`);
+    if (entityExtraction.entities.length > 0) {
+      this.logger.log(`   entities: ${JSON.stringify(entityExtraction.entities.map(e => ({ type: e.type, value: e.value instanceof Date ? e.value.toISOString() : e.value, original: e.original })))}`);
+    }
+    
     if (!entityExtraction.hasEntities) {
       return detection;
     }
@@ -1707,7 +1759,9 @@ Responde ÚNICAMENTE: true o false`;
 
       // Solo agregar si el campo NO existe en la detección actual
       const currentValue = detection.extractedData[fieldName];
+      this.logger.log(`   🔍 Campo ${fieldName}: valor actual = "${currentValue}" (type: ${typeof currentValue})`);
       if (currentValue !== null && currentValue !== undefined && currentValue !== '') {
+        this.logger.log(`   ⏭️ Saltando ${fieldName} - ya tiene valor`);
         continue; // Ya tiene valor, no sobrescribir
       }
 
@@ -1717,6 +1771,7 @@ Responde ÚNICAMENTE: true o false`;
           const dateValue = entity.value instanceof Date 
             ? entity.value 
             : new Date(entity.value as string);
+          this.logger.log(`   📆 Procesando fecha: ${entity.value} → ${dateValue} (valid: ${!isNaN(dateValue.getTime())})`);
           if (!isNaN(dateValue.getTime())) {
             detection.extractedData.date = DateHelper.formatDateToISO(dateValue);
             this.logger.log(`📅 EntityNormalizer enriqueció fecha: ${detection.extractedData.date}`);

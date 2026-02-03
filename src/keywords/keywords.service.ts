@@ -120,18 +120,20 @@ export class KeywordsService implements OnModuleInit {
 
   /**
    * Carga todos los keywords activos en cache
+   * Combina keywords de la tabla ServiceKeyword + keywords del array en Service
    */
   private async loadCache() {
     try {
-      const keywords = await this.prisma.serviceKeyword.findMany({
+      // 1. Cargar keywords de la tabla ServiceKeyword (legacy/específicos)
+      const legacyKeywords = await this.prisma.serviceKeyword.findMany({
         where: { active: true },
         orderBy: [{ companyId: 'asc' }, { weight: 'desc' }],
       });
 
       this.cache.clear();
 
-      // Agrupar por companyId (null = global)
-      keywords.forEach((k) => {
+      // Agrupar keywords legacy por companyId (null = global)
+      legacyKeywords.forEach((k) => {
         const key = k.companyId || 'global';
         if (!this.cache.has(key)) {
           this.cache.set(key, []);
@@ -144,9 +146,51 @@ export class KeywordsService implements OnModuleInit {
         });
       });
 
+      // 2. Cargar keywords desde Service.keywords (array dinámico)
+      const services = await this.prisma.service.findMany({
+        where: { active: true },
+        select: {
+          key: true,
+          keywords: true,
+          companyId: true,
+        },
+      });
+
+      // Agregar keywords de Service al cache
+      services.forEach((service) => {
+        if (!service.keywords || service.keywords.length === 0) return;
+
+        const key = service.companyId || 'global';
+        if (!this.cache.has(key)) {
+          this.cache.set(key, []);
+        }
+
+        // Agregar cada keyword del servicio (con peso 0.85 - alta confianza)
+        service.keywords.forEach((keyword) => {
+          // Evitar duplicados
+          const existing = this.cache.get(key)!.find(
+            (k) => k.keyword.toLowerCase() === keyword.toLowerCase() && k.serviceKey === service.key
+          );
+          if (!existing) {
+            this.cache.get(key)!.push({
+              serviceKey: service.key,
+              keyword: keyword,
+              type: 'contains', // Por defecto buscar si contiene
+              weight: 0.85, // Alta confianza para keywords del servicio
+            });
+          }
+        });
+      });
+
       this.lastCacheUpdate = Date.now();
+      
+      let totalKeywords = 0;
+      this.cache.forEach((keywords) => {
+        totalKeywords += keywords.length;
+      });
+      
       this.logger.log(
-        `Cache loaded: ${keywords.length} keywords (${this.cache.size} groups)`,
+        `Cache loaded: ${legacyKeywords.length} legacy + ${totalKeywords - legacyKeywords.length} from services = ${totalKeywords} total keywords (${this.cache.size} groups)`,
       );
     } catch (error) {
       this.logger.error('Error loading keywords cache:', error);

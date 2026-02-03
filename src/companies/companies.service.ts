@@ -198,6 +198,239 @@ export class CompaniesService {
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/(^-|-$)/g, '');
   }
+
+  // Obtener clientes (usuarios) de una empresa específica
+  async getCustomers(companyId: string) {
+    // Primero verificamos que la empresa existe
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId }
+    });
+
+    if (!company) {
+      throw new NotFoundException('Empresa no encontrada');
+    }
+
+    // Obtenemos usuarios que tienen preferencias con esta empresa
+    // o que han tenido conversaciones con esta empresa
+    const userPreferences = await this.prisma.userPreference.findMany({
+      where: { companyId },
+      include: {
+        user: true
+      },
+      orderBy: { updatedAt: 'desc' }
+    });
+
+    // También obtenemos usuarios que tienen conversaciones con esta empresa
+    // pero que no tienen preferencias guardadas aún
+    const conversationsUsers = await this.prisma.conversation.findMany({
+      where: { 
+        companyId,
+        userId: {
+          notIn: userPreferences.map(up => up.userId)
+        }
+      },
+      select: {
+        userId: true,
+        user: true,
+        lastMessageAt: true,
+        _count: {
+          select: { payments: true }
+        }
+      },
+      distinct: ['userId'],
+      orderBy: { lastMessageAt: 'desc' }
+    });
+
+    // Combinar resultados
+    const customers = [
+      // Usuarios con preferencias
+      ...userPreferences.map(up => ({
+        id: up.user.id,
+        phone: up.user.phone,
+        name: up.confirmedName || up.user.name,
+        email: up.confirmedEmail || up.user.email,
+        preferredChannel: 'WHATSAPP' as const, // Por ahora asumimos WhatsApp
+        metadata: up.user.metadata,
+        preferences: {
+          preferredService: up.preferredService,
+          preferredTime: up.preferredTime,
+          preferredDay: up.preferredDay,
+          defaultGuests: up.defaultGuests,
+          defaultAddress: up.defaultAddress,
+          totalReservations: up.totalReservations,
+          totalOrders: up.totalOrders,
+          lastVisitDate: up.lastVisitDate?.toISOString() || null,
+          favoriteProducts: up.favoriteProducts as string[],
+        },
+        totalReservations: up.totalReservations,
+        lastReservationDate: up.lastVisitDate?.toISOString() || null,
+        createdAt: up.user.createdAt.toISOString(),
+      })),
+      // Usuarios solo con conversaciones (sin preferencias)
+      ...conversationsUsers.map(cu => ({
+        id: cu.user.id,
+        phone: cu.user.phone,
+        name: cu.user.name,
+        email: cu.user.email,
+        preferredChannel: 'WHATSAPP' as const,
+        metadata: cu.user.metadata,
+        preferences: null,
+        totalReservations: 0,
+        lastReservationDate: cu.lastMessageAt?.toISOString() || null,
+        createdAt: cu.user.createdAt.toISOString(),
+      }))
+    ];
+
+    return { data: customers };
+  }
+
+  // Obtener historial de conversaciones de una empresa
+  async getConversationLogs(companyId: string, options?: { 
+    limit?: number; 
+    userId?: string;
+    startDate?: Date;
+    endDate?: Date;
+  }) {
+    const company = await this.prisma.company.findUnique({
+      where: { id: companyId }
+    });
+
+    if (!company) {
+      throw new NotFoundException('Empresa no encontrada');
+    }
+
+    const where: any = { companyId };
+    
+    if (options?.userId) {
+      where.userId = options.userId;
+    }
+    
+    if (options?.startDate || options?.endDate) {
+      where.createdAt = {};
+      if (options?.startDate) where.createdAt.gte = options.startDate;
+      if (options?.endDate) where.createdAt.lte = options.endDate;
+    }
+
+    const logs = await this.prisma.conversationLog.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: options?.limit || 100,
+    });
+
+    // Agrupar por conversationId o por userId si no hay conversationId
+    const grouped = logs.reduce((acc, log) => {
+      const key = log.conversationId || log.userId;
+      if (!acc[key]) {
+        acc[key] = {
+          id: key,
+          userId: log.userId,
+          messages: [],
+          lastMessageAt: log.createdAt,
+          firstMessageAt: log.createdAt,
+        };
+      }
+      acc[key].messages.push({
+        id: log.id,
+        userMessage: log.userMessage,
+        botResponse: log.botResponse,
+        intention: log.detectedIntention,
+        confidence: log.confidence,
+        success: log.success,
+        createdAt: log.createdAt,
+      });
+      if (log.createdAt < acc[key].firstMessageAt) {
+        acc[key].firstMessageAt = log.createdAt;
+      }
+      return acc;
+    }, {} as Record<string, any>);
+
+    // Convertir a array y ordenar por última actividad
+    const conversations = Object.values(grouped)
+      .sort((a: any, b: any) => b.lastMessageAt.getTime() - a.lastMessageAt.getTime());
+
+    return { data: conversations };
+  }
+
+  // Obtener TODOS los clientes de TODAS las empresas (solo para SUPER_ADMIN)
+  async getAllCustomers() {
+    // Obtenemos todos los usuarios que tienen preferencias o conversaciones
+    const userPreferences = await this.prisma.userPreference.findMany({
+      include: {
+        user: true,
+        company: {
+          select: { id: true, name: true, slug: true }
+        }
+      },
+      orderBy: { updatedAt: 'desc' }
+    });
+
+    // Usuarios con conversaciones pero sin preferencias
+    const conversationsUsers = await this.prisma.conversation.findMany({
+      where: {
+        userId: {
+          notIn: userPreferences.map(up => up.userId)
+        }
+      },
+      include: {
+        user: true,
+      },
+      distinct: ['userId'],
+      orderBy: { lastMessageAt: 'desc' }
+    });
+
+    // Obtener empresas de las conversaciones
+    const companyIds = [...new Set(conversationsUsers.map(cu => cu.companyId))];
+    const companies = await this.prisma.company.findMany({
+      where: { id: { in: companyIds } },
+      select: { id: true, name: true, slug: true }
+    });
+    const companiesMap = new Map(companies.map(c => [c.id, c]));
+
+    // Combinar resultados
+    const customers = [
+      ...userPreferences.map(up => ({
+        id: up.user.id,
+        phone: up.user.phone,
+        name: up.confirmedName || up.user.name,
+        email: up.confirmedEmail || up.user.email,
+        preferredChannel: 'WHATSAPP' as const,
+        metadata: up.user.metadata,
+        company: up.company,
+        preferences: {
+          preferredService: up.preferredService,
+          preferredTime: up.preferredTime,
+          preferredDay: up.preferredDay,
+          defaultGuests: up.defaultGuests,
+          defaultAddress: up.defaultAddress,
+          totalReservations: up.totalReservations,
+          totalOrders: up.totalOrders,
+          lastVisitDate: up.lastVisitDate?.toISOString() || null,
+          favoriteProducts: up.favoriteProducts as string[],
+        },
+        totalReservations: up.totalReservations,
+        lastReservationDate: up.lastVisitDate?.toISOString() || null,
+        createdAt: up.user.createdAt.toISOString(),
+      })),
+      ...conversationsUsers.map(cu => {
+        const company = companiesMap.get(cu.companyId);
+        return {
+          id: cu.user.id,
+          phone: cu.user.phone,
+          name: cu.user.name,
+          email: cu.user.email,
+          preferredChannel: 'WHATSAPP' as const,
+          metadata: cu.user.metadata,
+          company: company ? { id: company.id, name: company.name, slug: company.slug } : null,
+          preferences: null,
+          totalReservations: 0,
+          lastReservationDate: cu.lastMessageAt?.toISOString() || null,
+          createdAt: cu.user.createdAt.toISOString(),
+        };
+      })
+    ];
+
+    return { data: customers };
+  }
 }
 
 

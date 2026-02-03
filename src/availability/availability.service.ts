@@ -63,6 +63,15 @@ export class AvailabilityService {
       };
     }
 
+    // VALIDACIÓN 2.5: Validar que la hora existe
+    if (!data.time) {
+      return {
+        isAvailable: false,
+        message: '❌ Necesito saber la hora para verificar disponibilidad. ¿A qué hora te gustaría?',
+        reason: 'missing_time',
+      };
+    }
+
     // VALIDACIÓN 3: No permitir reservas en el pasado
     const now = new Date();
     const [hours_req, minutes_req] = data.time.split(':').map(Number);

@@ -94,13 +94,13 @@ export class PromptBuilderService {
     const intentionsJson = availableIntentions.map(i => `"${i}"`).join(' | ');
 
     // 2. Obtener campos requeridos del servicio actual (si hay)
-    let requiredFields: string[] = ['date', 'time', 'phone']; // Campos base siempre requeridos
-    let fieldsToExtract: string[] = ['date', 'time', 'phone', 'name', 'guests'];
-    let fieldsDescription = `- date: YYYY-MM-DD o null (NO asumas hoy si no dice fecha)
-- time: HH:MM o null
-- phone: string o null (7-15 dígitos, puede incluir código de país)
-- name: string o null
-- guests: número o null (solo si el usuario lo menciona)`;
+    let requiredFields: string[] = ['fecha', 'hora', 'telefono']; // Campos base siempre requeridos
+    let fieldsToExtract: string[] = ['fecha', 'hora', 'telefono', 'nombre', 'personas'];
+    let fieldsDescription = `- fecha: YYYY-MM-DD o null (NO asumas hoy si no dice fecha)
+- hora: HH:MM o null
+- telefono: string o null (7-15 dígitos, puede incluir código de país)
+- nombre: string o null
+- personas: número o null (solo si el usuario lo menciona)`;
 
     if (serviceKey) {
       // Resolver configuración del servicio
@@ -108,19 +108,31 @@ export class PromptBuilderService {
       requiredFields = this.serviceValidator.getRequiredFields(resolution.validatorConfig);
       
       // Construir lista de campos a extraer basada en campos requeridos
-      fieldsToExtract = [...new Set([...requiredFields, 'name', 'service'])];
+      fieldsToExtract = [...new Set([...requiredFields, 'nombre', 'servicio'])];
       
-      // Construir descripción dinámica de campos
+      // Construir descripción dinámica de campos (en español)
       const fieldDescriptions: Record<string, string> = {
-        date: 'date: YYYY-MM-DD o null (NO asumas hoy si no dice fecha)',
-        time: 'time: HH:MM o null',
-        phone: 'phone: string o null (7-15 dígitos, puede incluir código de país)',
-        name: 'name: string o null',
-        guests: 'guests: número o null (solo si el usuario lo menciona)',
-        service: 'service: key_del_servicio o null',
-        products: 'products: array de {id, quantity} si el usuario menciona productos (si no menciona cantidad, quantity=1)',
-        address: 'address: string o null (dirección/ubicación completa para entrega - solo si menciona dirección, calle, avenida, barrio, etc.)',
-        tableId: 'tableId: string o null (ID de mesa específica si se menciona)',
+        fecha: 'fecha: YYYY-MM-DD o null (NO asumas hoy si no dice fecha)',
+        hora: 'hora: HH:MM o null',
+        telefono: 'telefono: string o null (7-15 dígitos, puede incluir código de país)',
+        nombre: 'nombre: string o null',
+        personas: 'personas: número o null (solo si el usuario lo menciona)',
+        servicio: 'servicio: key_del_servicio o null',
+        productos: 'productos: array de {id, quantity} si el usuario menciona productos (si no menciona cantidad, quantity=1)',
+        direccion: 'direccion: string o null (dirección/ubicación completa para entrega - solo si menciona dirección, calle, avenida, barrio, etc.)',
+        mesa: 'mesa: string o null (ID de mesa específica si se menciona)',
+        notas: 'notas: string o null (comentarios adicionales del cliente)',
+        // Fallback para campos legacy en inglés
+        date: 'fecha: YYYY-MM-DD o null',
+        time: 'hora: HH:MM o null',
+        phone: 'telefono: string o null',
+        name: 'nombre: string o null',
+        guests: 'personas: número o null',
+        service: 'servicio: key_del_servicio o null',
+        products: 'productos: array de {id, quantity}',
+        address: 'direccion: string o null',
+        tableId: 'mesa: string o null',
+        notes: 'notas: string o null',
       };
 
       fieldsDescription = fieldsToExtract
@@ -132,39 +144,46 @@ export class PromptBuilderService {
         })
         .join('\n');
     } else {
-      // Si no hay servicio, incluir todos los campos posibles
-      fieldsDescription += `\n${hasMultipleServices ? '- service: key_del_servicio o null (si menciona un servicio o sinónimo, NO puede ser null)\n' : ''}`;
-      fieldsDescription += `${productsInfo ? '- products: array de {id, quantity} si el usuario menciona productos (si no menciona cantidad, quantity=1)\n' : ''}`;
-      fieldsDescription += '- address: string o null (dirección/ubicación para entrega - solo si menciona dirección, calle, avenida, barrio, etc.)';
-      fieldsToExtract.push('service', 'products', 'address');
+      // Si no hay servicio, incluir todos los campos posibles (en español)
+      fieldsDescription += `\n${hasMultipleServices ? '- servicio: key_del_servicio o null (si menciona un servicio o sinónimo, NO puede ser null)\n' : ''}`;
+      fieldsDescription += `${productsInfo ? '- productos: array de {id, quantity} si el usuario menciona productos (si no menciona cantidad, quantity=1)\n' : ''}`;
+      fieldsDescription += '- direccion: string o null (dirección/ubicación para entrega - solo si menciona dirección, calle, avenida, barrio, etc.)';
+      fieldsToExtract.push('servicio', 'productos', 'direccion');
     }
 
-    // 3. Construir JSON schema dinámico para extractedData
+    // 3. Construir JSON schema dinámico para extractedData (en español)
     const extractedDataFields = fieldsToExtract
       .map(field => {
-        if (field === 'products') {
-          return '    "products": [{"id":"string","quantity":1}] o []';
+        // Campos en español
+        if (field === 'productos' || field === 'products') {
+          return '    "productos": [{"id":"string","quantity":1}] o []';
         }
-        if (field === 'service' && hasMultipleServices) {
-          return '    "service": "key_del_servicio o null"';
+        if ((field === 'servicio' || field === 'service') && hasMultipleServices) {
+          return '    "servicio": "key_del_servicio o null"';
         }
-        if (field === 'address') {
-          return '    "address": "string o null (dirección completa para entrega)"';
+        if (field === 'direccion' || field === 'address') {
+          return '    "direccion": "string o null (dirección completa para entrega)"';
         }
-        if (field === 'date') {
-          return '    "date": "YYYY-MM-DD o null"';
+        if (field === 'fecha' || field === 'date') {
+          return '    "fecha": "YYYY-MM-DD o null"';
         }
-        if (field === 'time') {
-          return '    "time": "HH:MM o null"';
+        if (field === 'hora' || field === 'time') {
+          return '    "hora": "HH:MM o null"';
         }
-        if (field === 'guests') {
-          return '    "guests": número o null';
+        if (field === 'personas' || field === 'guests') {
+          return '    "personas": número o null';
         }
-        if (field === 'phone') {
-          return '    "phone": "string o null"';
+        if (field === 'telefono' || field === 'phone') {
+          return '    "telefono": "string o null"';
         }
-        if (field === 'name') {
-          return '    "name": "string o null"';
+        if (field === 'nombre' || field === 'name') {
+          return '    "nombre": "string o null"';
+        }
+        if (field === 'mesa' || field === 'tableId') {
+          return '    "mesa": "string o null"';
+        }
+        if (field === 'notas' || field === 'notes') {
+          return '    "notas": "string o null"';
         }
         if (field === 'tableId') {
           return '    "tableId": "string o null"';

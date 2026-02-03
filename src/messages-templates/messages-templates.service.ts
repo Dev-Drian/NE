@@ -71,9 +71,9 @@ export class MessagesTemplatesService {
     const template = config?.templates.reservationRequest || config?.templates.missingFields || 'Para continuar necesito: {{fields}}';
     const terminology = config?.terminology || this.getDefaultTerminology();
     
-    // Determinar si es domicilio para usar "pedido" en lugar de "reserva"
-    const isDomicilio = service === 'domicilio';
-    const reservationType = isDomicilio ? 'pedido' : terminology.reservation;
+    // Determinar tipo de reservación dinámicamente (delivery/domicilio = pedido)
+    const isDeliveryService = service && (service.includes('domicilio') || service.includes('delivery') || service.includes('envio'));
+    const reservationType = isDeliveryService ? 'pedido' : terminology.reservation;
     
     // Si solo falta un campo, hacer mensaje más amigable
     if (fields.length === 1) {
@@ -97,9 +97,10 @@ export class MessagesTemplatesService {
     const terminology = await this.getTerminology(companyType);
     const parts: string[] = [];
 
-    // Determinar si es domicilio para usar "pedido" en lugar de "reserva"
-    const isDomicilio = collectedData['service'] === 'domicilio';
-    const reservationType = isDomicilio ? 'pedido' : terminology.reservation;
+    // Determinar tipo de reservación dinámicamente (delivery/domicilio = pedido)
+    const service = collectedData['service'] as string;
+    const isDeliveryService = service && (service.includes('domicilio') || service.includes('delivery') || service.includes('envio'));
+    const reservationType = isDeliveryService ? 'pedido' : terminology.reservation;
 
     // Construir confirmación de datos recibidos
     const receivedParts: string[] = [];
@@ -231,16 +232,18 @@ export class MessagesTemplatesService {
     const timeReadable = DateHelper.formatTimeReadable(data.time);
     
     // Determinar tipo de confirmación según el servicio
-    // - domicilio → "Pedido confirmado"
-    // - cita → "Cita confirmada"
-    // - mesa/reserva → "Reserva confirmada"
+    // Prioridad: serviceConfig > nombre que sugiere delivery > nombre que sugiere cita > default (reserva)
     let confirmationType: string;
     let confirmationGender: string;
     
-    if (data.service === 'domicilio') {
+    const serviceName = data.service?.toLowerCase() || '';
+    const isDeliveryService = serviceName.includes('domicilio') || serviceName.includes('delivery') || serviceName.includes('envio');
+    const isAppointmentService = serviceName.includes('cita') || serviceName.includes('consulta') || serviceName.includes('appointment');
+    
+    if (isDeliveryService) {
       confirmationType = 'Pedido';
       confirmationGender = 'confirmado';
-    } else if (data.service === 'cita') {
+    } else if (isAppointmentService) {
       confirmationType = 'Cita';
       confirmationGender = 'confirmada';
     } else {
@@ -250,7 +253,7 @@ export class MessagesTemplatesService {
     
     // LOG PARA DEPURACIÓN
     console.log('🎯 Tipo de confirmación elegido:', confirmationType, confirmationGender);
-    console.log('🔍 Comparación service === "cita":', data.service === 'cita');
+    console.log('🔍 Servicio:', data.service, '| isAppointment:', isAppointmentService);
     
     // Construir mensaje con servicio si está disponible
     let confirmMessage = `✅ ¡${confirmationType} ${confirmationGender}!
@@ -259,17 +262,18 @@ export class MessagesTemplatesService {
 🕐 Hora: ${timeReadable}`;
 
     // Agregar servicio/tratamiento si está presente
-    // Para citas médicas, mostrar el tratamiento específico (productName tiene prioridad)
-    if (data.productName && data.service === 'cita') {
+    // Para servicios tipo cita, mostrar el tratamiento específico (productName tiene prioridad)
+    if (data.productName && isAppointmentService) {
       confirmMessage += `\n🏥 Servicio: ${data.productName}`;
-    } else if (data.serviceName && data.service === 'cita') {
+    } else if (data.serviceName && isAppointmentService) {
       confirmMessage += `\n🏥 Servicio: ${data.serviceName}`;
-    } else if (data.serviceName && data.service !== 'domicilio') {
+    } else if (data.serviceName && !isDeliveryService) {
       confirmMessage += `\n🔧 Servicio: ${data.serviceName}`;
     }
     
-    // Solo mostrar personas para reservas de mesa
-    if (data.service === 'mesa' || (!data.service && guests > 0)) {
+    // Mostrar personas para reservas (no delivery ni citas individuales)
+    const showGuests = !isDeliveryService && !isAppointmentService && guests > 0;
+    if (showGuests || data.service?.includes('mesa')) {
       confirmMessage += `\n👥 ${guests} ${peopleText}`;
     }
     

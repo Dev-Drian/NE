@@ -1,7 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Company } from '@prisma/client';
 import { MessagesTemplatesService } from '../../messages-templates/messages-templates.service';
-import { ProductsService } from '../../products/products.service';
+import { ServicesService } from '../../services/services.service';
 import { ServiceConfig } from './service-validator.service';
 
 export interface ResolvedService {
@@ -18,9 +18,11 @@ export interface ResolvedService {
 
 @Injectable()
 export class ServiceConfigResolverService {
+  private readonly logger = new Logger(ServiceConfigResolverService.name);
+  
   constructor(
     private messagesTemplates: MessagesTemplatesService,
-    private productsService: ProductsService,
+    private servicesService: ServicesService,
   ) {}
 
   /**
@@ -30,26 +32,36 @@ export class ServiceConfigResolverService {
    * - metadata UX (pedido vs reserva)
    */
   async resolve(company: Company, companyType: string, serviceKey?: string): Promise<ResolvedService> {
-    // Obtener servicios desde BD (productos con category='service')
-    const dbProducts = await this.productsService.findByCompany(company.id);
-    const serviceProducts = dbProducts.filter(p => p.category === 'service');
+    // Obtener servicios desde la tabla Service (no productos)
+    const dbServices = await this.servicesService.getServicesByCompany(company.id);
     
-    // Construir availableServices desde BD (compatibilidad con código existente)
+    // Construir availableServices desde BD
     const availableServices: Record<string, any> = {};
-    for (const product of serviceProducts) {
-      const metadata = (product.metadata as any) || {};
-      availableServices[metadata.serviceKey || product.id] = {
-        name: product.name,
-        description: product.description,
-        enabled: product.active,
-        ...metadata, // incluye requiresProducts, requiresPayment, etc.
+    for (const service of dbServices) {
+      const serviceConfig = (service.config as any) || {};
+      availableServices[service.key] = {
+        name: service.name,
+        description: service.description,
+        enabled: service.active && service.available,
+        requiredFields: service.requiredFields || [],
+        optionalFields: service.optionalFields || [],
+        allowedProductCategories: service.allowedProductCategories || [],
+        keywords: service.keywords || [],
+        basePrice: service.basePrice,
+        ...serviceConfig, // config JSON adicional (minGuests, maxGuests, etc.)
       };
     }
+    
+    this.logger.debug(`📋 Servicios disponibles para ${company.slug}: ${Object.keys(availableServices).join(', ')}`);
     
     const hasMultipleServices = Object.keys(availableServices).length > 1;
 
     const rawServiceConfig = serviceKey ? availableServices[serviceKey] : undefined;
     const serviceName = rawServiceConfig?.name || (serviceKey ? serviceKey : undefined);
+    
+    if (serviceKey && rawServiceConfig) {
+      this.logger.debug(`🎯 Servicio seleccionado: ${serviceKey}, requiredFields: ${JSON.stringify(rawServiceConfig.requiredFields)}`);
+    }
 
     // Defaults desde templates (compatibilidad). El override real debería venir de config.services[serviceKey]
     const settings = await this.messagesTemplates.getReservationSettings(companyType);
@@ -69,27 +81,61 @@ export class ServiceConfigResolverService {
     const requiresTable = rawServiceConfig?.requiresTable === true;
     const requiresAddress = rawServiceConfig?.requiresAddress === true || rawServiceConfig?.requiresLocation === true;
 
-    // Determinar el sustantivo correcto según el servicio
-    // - domicilio → "pedido"
-    // - cita → "cita"
-    // - mesa/otros → "reserva"
+    // Determinar el sustantivo correcto según la configuración del servicio
+    // Prioridad: config explícito > requiresAddress (pedido) > isAppointmentBased (cita) > default (reserva)
     let reservationNoun: 'reserva' | 'pedido' | 'cita' = 'reserva';
-    if (serviceKey === 'domicilio') {
+    if (rawServiceConfig?.reservationNoun) {
+      reservationNoun = rawServiceConfig.reservationNoun;
+    } else if (requiresAddress || rawServiceConfig?.isDelivery) {
       reservationNoun = 'pedido';
-    } else if (serviceKey === 'cita') {
+    } else if (rawServiceConfig?.isAppointmentBased || rawServiceConfig?.requiresAppointmentCheck) {
       reservationNoun = 'cita';
     }
 
     const missingFieldLabels: Record<string, string> = {
+      // Campos estándar - claves en inglés, labels en español para el usuario
       date: 'fecha',
       time: 'hora',
       phone: 'teléfono',
-      guests: 'comensales',
-      service: 'servicio',
+      guests: 'personas',
+      name: 'nombre',
+      email: 'email',
+      address: 'dirección',
       products: company.type === 'restaurant' ? 'productos' : 'tratamientos',
       tableId: 'mesa',
-      address: 'dirección',
-      location: 'ubicación',
+      notes: 'notas',
+      service: 'servicio',
+      // Campos opcionales comunes
+      occasion: 'ocasión especial',
+      event_type: 'tipo de evento',
+      arrival_time: 'hora de llegada',
+      departure_time: 'hora de salida',
+      pets: 'mascotas',
+      additional_services: 'servicios adicionales',
+      symptoms: 'síntomas',
+      first_time: 'primera vez',
+      whitening_type: 'tipo de blanqueamiento',
+      treatment_type: 'tipo de tratamiento',
+      tooth: 'pieza dental',
+      wisdom_tooth: 'cordal',
+      therapist: 'terapeuta',
+      skin_type: 'tipo de piel',
+      // Tienda de ropa
+      visit_date: 'fecha de visita',
+      visit_time: 'hora de visita',
+      advisory: 'asesoría',
+      payment_method: 'método de pago',
+      size: 'talla',
+      gift: 'regalo',
+      hold_days: 'plazo en días',
+      budget: 'presupuesto',
+      style: 'estilo',
+      alteration_type: 'tipo de arreglo',
+      delivery_date: 'fecha de entrega',
+      garment: 'prenda',
+      product: 'producto',
+      color: 'color',
+      urgent: 'urgente',
     };
 
     // Permitir que cada servicio redefina labels
@@ -110,6 +156,7 @@ export class ServiceConfigResolverService {
         requiresPayment,
         requiresAddress,
         requiredFields: rawServiceConfig?.requiredFields, // Campos específicos del servicio
+        optionalFields: rawServiceConfig?.optionalFields, // Campos opcionales del servicio
         name: serviceName,
         enabled: rawServiceConfig?.enabled !== false,
       },
