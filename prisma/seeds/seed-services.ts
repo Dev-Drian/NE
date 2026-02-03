@@ -109,6 +109,7 @@ export async function seedRestaurantServices(prisma: PrismaClient, companyId: st
 
 /**
  * Seed de servicios para la clínica dental
+ * Los servicios con basePrice y requiresPayment=true pedirán anticipo automáticamente
  */
 export async function seedClinicServices(prisma: PrismaClient, companyId: string) {
   console.log('🏥 Creando servicios de la clínica...');
@@ -125,10 +126,12 @@ export async function seedClinicServices(prisma: PrismaClient, companyId: string
       config: {
         duration: 45, // minutos
         requiresDeposit: true,
-        depositPercentage: 100,
+        depositPercentage: 100, // Pago completo por adelantado
         advanceBookingDays: 60,
         requiresMedicalHistory: true,
         requiresProducts: false,
+        requiresPayment: true, // ⚠️ Requiere pago - se calcula automáticamente con basePrice
+        isAppointmentBased: true,
       },
       keywords: ['limpieza', 'limpieza dental', 'profilaxis', 'limpiar dientes', 'higiene'],
       basePrice: 80000,
@@ -150,6 +153,8 @@ export async function seedClinicServices(prisma: PrismaClient, companyId: string
         advanceBookingDays: 30,
         allowsUrgent: true,
         requiresProducts: false,
+        requiresPayment: false, // Consulta inicial sin anticipo
+        isAppointmentBased: true,
       },
       keywords: ['consulta', 'cita', 'revision', 'chequeo', 'dolor', 'muela', 'diente', 'ver', 'revisar'],
       basePrice: 50000,
@@ -168,10 +173,12 @@ export async function seedClinicServices(prisma: PrismaClient, companyId: string
       config: {
         duration: 90,
         requiresDeposit: true,
-        depositPercentage: 50,
+        depositPercentage: 50, // Solo 50% de anticipo
         advanceBookingDays: 14,
         requiresPreviousConsultation: true,
         requiresProducts: false,
+        requiresPayment: true, // ⚠️ Requiere pago - 50% del basePrice
+        isAppointmentBased: true,
       },
       keywords: ['blanqueamiento', 'blanquear', 'dientes blancos', 'aclarar', 'blanco'],
       basePrice: 350000,
@@ -194,6 +201,8 @@ export async function seedClinicServices(prisma: PrismaClient, companyId: string
         advanceBookingDays: 21,
         includesXray: true,
         requiresProducts: false,
+        requiresPayment: true, // ⚠️ Requiere pago completo
+        isAppointmentBased: true,
       },
       keywords: ['ortodoncia', 'brackets', 'frenillos', 'alinear dientes', 'invisalign', 'dientes chuecos'],
       basePrice: 120000,
@@ -212,11 +221,13 @@ export async function seedClinicServices(prisma: PrismaClient, companyId: string
       config: {
         duration: 45,
         requiresDeposit: true,
-        depositPercentage: 50,
+        depositPercentage: 50, // Solo 50% de anticipo
         advanceBookingDays: 7,
         requiresMedicalHistory: true,
         requiresPreviousConsultation: true,
         requiresProducts: false,
+        requiresPayment: true, // ⚠️ Requiere pago - 50% del basePrice
+        isAppointmentBased: true,
       },
       keywords: ['extraccion', 'extraer', 'sacar muela', 'cordal', 'muela del juicio', 'quitar muela'],
       basePrice: 150000,

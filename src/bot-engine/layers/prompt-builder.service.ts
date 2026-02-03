@@ -24,7 +24,8 @@ export class PromptBuilderService {
     private serviceValidator: ServiceValidatorService,
     private productsService: ProductsService,
   ) {}
-  buildServicesInfo(company: Company): { servicesInfo: string; hasMultipleServices: boolean } {
+  
+  async buildServicesInfo(company: Company): Promise<{ servicesInfo: string; hasMultipleServices: boolean }> {
     const config = company.config as any;
     const availableServices = config?.services || {};
     const hasMultipleServices = Object.keys(availableServices).length > 1;
@@ -46,17 +47,44 @@ export class PromptBuilderService {
     return { servicesInfo, hasMultipleServices: true };
   }
 
-  buildProductsInfo(company: Company): string {
-    const config = company.config as any;
-    const products = config?.products || [];
-    if (!Array.isArray(products) || products.length === 0) return '';
+  /**
+   * Construye información de productos desde la BD (tabla Product)
+   * NO desde el config JSON de Company
+   */
+  async buildProductsInfo(companyId: string): Promise<string> {
+    try {
+      const products = await this.productsService.findByCompany(companyId);
+      if (!Array.isArray(products) || products.length === 0) return '';
 
-    const productsList = products
-      .map((p: any) => `"${p.id}": ${p.name} (${p.price || 0})`)
-      .slice(0, 30)
-      .join(', ');
+      // Agrupar por categoría para mejor contexto
+      const byCategory: Record<string, typeof products> = {};
+      for (const p of products) {
+        const cat = p.category || 'general';
+        if (!byCategory[cat]) byCategory[cat] = [];
+        byCategory[cat].push(p);
+      }
 
-    return `\n\nPRODUCTOS/TRATAMIENTOS DISPONIBLES (si el usuario menciona alguno, extrae el ID y quantity):\n${productsList}`;
+      let productsList = '';
+      for (const [category, items] of Object.entries(byCategory)) {
+        const categoryProducts = items
+          .map((p: any) => `"${p.id}": ${p.name} ($${p.price || 0})`)
+          .slice(0, 15)
+          .join(', ');
+        productsList += `\n  [${category}]: ${categoryProducts}`;
+      }
+
+      return `\n\n🛒 PRODUCTOS/TRATAMIENTOS DISPONIBLES (si el usuario menciona alguno, extrae el ID exacto y quantity):${productsList}
+
+⚠️ REGLAS PARA EXTRAER PRODUCTOS:
+- Busca coincidencias parciales: "coca cola" = "coca_cola", "bruschetta" = "bruschetta"
+- Si dice cantidad (ej: "2 hamburguesas"), extrae quantity=2
+- Si NO dice cantidad, usa quantity=1
+- Extrae TODOS los productos que mencione, no solo uno`;
+
+    } catch (error) {
+      console.warn('Error obteniendo productos de BD:', error);
+      return '';
+    }
   }
 
   buildPrompt(params: {
@@ -83,7 +111,7 @@ export class PromptBuilderService {
     const { company, message, dateRefs, conversationContextText, currentStateInfo, contextualInfo, serviceKey } = params;
 
     const { servicesInfo, hasMultipleServices } = await this.buildServicesInfo(company);
-    const productsInfo = this.buildProductsInfo(company);
+    const productsInfo = await this.buildProductsInfo(company.id); // Obtener de BD
 
     // 1. Obtener intenciones dinámicas de la BD
     const intentions = await this.intentionsService.findByCompany(company.id);
@@ -222,6 +250,30 @@ INSTRUCCIONES CRÍTICAS:
 
 1) EXTRACCIÓN DE DATOS - extrae SOLO lo que el usuario menciona explícitamente:
 ${fieldsDescription}
+
+⚠️ REGLAS CRÍTICAS DE EXTRACCIÓN:
+
+📍 DIRECCIÓN: Si el usuario dice algo como:
+- "mi dirección es..." / "mi direccion es..." → Extrae TODO lo que sigue como dirección
+- "enviar a..." / "entrega en..." → Extrae la ubicación completa
+- Cualquier mención de calle, avenida, barrio, sector, carrera, etc.
+- Ejemplo: "mi direccion es nelson mandela sector las t" → direccion: "nelson mandela sector las t"
+
+📅 FECHAS RELATIVAS - CONVIERTE A FORMATO YYYY-MM-DD:
+- "hoy" → ${dateRefs.hoy}
+- "mañana" / "mñana" → ${dateRefs.manana}
+- "pasado mañana" → ${dateRefs.pasadoManana}
+- Si menciona día de la semana, usa las fechas de referencia de arriba
+
+🕐 HORAS - CONVIERTE A FORMATO 24H (HH:MM):
+- "a las 8 de la tarde" / "8pm" → 20:00
+- "a las 7 de la mañana" / "7am" → 07:00
+- "a las 2" (sin especificar) → Usa contexto (restaurante almuerzo=14:00, cena=20:00)
+
+🛒 PRODUCTOS - Busca en el catálogo:
+- Busca coincidencias parciales (coca cola = coca_cola)
+- Extrae TODOS los que mencione, no solo uno
+- Si dice "una coca" = quantity: 1, "dos hamburguesas" = quantity: 2
 
 ${serviceKey ? `\n⚠️ SERVICIO ACTUAL: ${serviceKey}\nCampos requeridos para este servicio: ${requiredFields.join(', ')}\n` : ''}
 

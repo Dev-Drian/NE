@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { CompaniesService } from '../../companies/companies.service';
 import { ReservationsService } from '../../reservations/reservations.service';
+import { ServicesService } from '../../services/services.service';
+import { ProductsService } from '../../products/products.service';
 
 export interface ResourceValidationResult {
   isValid: boolean;
@@ -14,6 +16,8 @@ export class ResourceValidatorService {
   constructor(
     private companiesService: CompaniesService,
     private reservationsService: ReservationsService,
+    private servicesService: ServicesService,
+    private productsService: ProductsService,
   ) {}
 
   /**
@@ -22,8 +26,8 @@ export class ResourceValidatorService {
   async validateAndAssignResources(
     companyId: string,
     service: string,
-    date: string,
-    time: string,
+    date: string | undefined,
+    time: string | undefined,
     data: {
       guests?: number;
       products?: Array<{ id: string; quantity: number }>;
@@ -37,14 +41,27 @@ export class ResourceValidatorService {
 
     const config = company.config as any;
     const resources = config?.resources || [];
-    const products = config?.products || [];
-    const serviceConfig = config?.services?.[service];
+    
+    // Obtener productos de la BD (tabla Product) - fallback a config legacy
+    const dbProducts = await this.productsService.findByCompany(companyId);
+    const products = dbProducts.length > 0 ? dbProducts : (config?.products || []);
+    
+    // Obtener config del servicio desde la tabla Service (nueva arquitectura)
+    const dbService = await this.servicesService.getServiceByKey(companyId, service);
+    const dbServiceConfig = dbService?.config as any || {};
+    
+    // Fallback a config legacy en company.config.services[service]
+    const legacyServiceConfig = config?.services?.[service] || {};
+    
+    // Merge: prioridad a config de tabla Service
+    const serviceConfig = { ...legacyServiceConfig, ...dbServiceConfig };
 
     const result: ResourceValidationResult = { isValid: true };
 
-    // 1. VALIDAR Y ASIGNAR MESA (si el servicio requiere mesa según config)
-    // Usamos serviceConfig?.requiresTable en lugar de comparar con 'mesa'
-    if (serviceConfig?.requiresTable) {
+    // 1. VALIDAR Y ASIGNAR MESA (si el servicio requiere recursos/mesa según config)
+    // requiresResources es el nuevo campo unificado, requiresTable es legacy
+    const needsResourceValidation = serviceConfig?.requiresResources === true || serviceConfig?.requiresTable === true;
+    if (needsResourceValidation && date && time) {
       const tableResult = await this.validateTable(
         resources,
         data.tableId,
@@ -170,12 +187,19 @@ export class ResourceValidatorService {
   private async validateProducts(
     catalogProducts: any[],
     requestedProducts: Array<{ id: string; quantity: number }>,
-    date: string
+    date?: string
   ): Promise<ResourceValidationResult> {
     const unavailableItems: Array<{ id: string; name: string; reason: string }> = [];
 
     for (const item of requestedProducts) {
-      const product = catalogProducts.find(p => p.id === item.id);
+      // Buscar por ID exacto O por nombre (normalizado)
+      const normalizedItemId = item.id.toLowerCase().trim();
+      const product = catalogProducts.find(p => 
+        p.id === item.id || 
+        p.name?.toLowerCase().trim() === normalizedItemId ||
+        p.name?.toLowerCase().includes(normalizedItemId) ||
+        normalizedItemId.includes(p.name?.toLowerCase())
+      );
       
       if (!product) {
         unavailableItems.push({
@@ -208,8 +232,8 @@ export class ResourceValidatorService {
         }
       }
 
-      // Validar disponibilidad por fecha (si existe)
-      if (product.availableDates && Array.isArray(product.availableDates)) {
+      // Validar disponibilidad por fecha (si existe y hay fecha)
+      if (date && product.availableDates && Array.isArray(product.availableDates)) {
         if (!product.availableDates.includes(date)) {
           unavailableItems.push({
             id: product.id,

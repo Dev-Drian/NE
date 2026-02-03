@@ -608,22 +608,27 @@ export class BotEngineService {
     // Esto es importante cuando el servicio requiere productos y el usuario pregunta qué hay disponible
     if (asksForProducts) {
       const config = company.config as any;
-      const products = config?.products || [];
       const services = config?.services || {};
       const serviceKeys = Object.keys(services);
       
+      // Obtener productos de la base de datos (tabla Product)
+      const dbProducts = await this.productsService.findByCompany(dto.companyId);
+      // Fallback a config.products si no hay en BD
+      const products = dbProducts.length > 0 ? dbProducts : (config?.products || []);
+      
       if (products.length > 0) {
-        let reply = `📋 **${company.type === 'restaurant' ? 'Nuestro Menú' : 'Nuestros Servicios'}:**\n\n`;
+        let reply = `🛒 *${company.type === 'restaurant' ? 'Nuestro Menú' : 'Nuestros Productos'}:*\n\n`;
         
         // Agrupar por categoría
-        const grouped: any = {};
+        const grouped: Record<string, any[]> = {};
         products.forEach((p: any) => {
-          if (!grouped[p.category]) grouped[p.category] = [];
-          grouped[p.category].push(p);
+          const cat = p.category || 'Otros';
+          if (!grouped[cat]) grouped[cat] = [];
+          grouped[cat].push(p);
         });
         
         for (const [category, items] of Object.entries(grouped)) {
-          reply += `**${category.charAt(0).toUpperCase() + category.slice(1)}**\n`;
+          reply += `*${category.charAt(0).toUpperCase() + category.slice(1)}*\n`;
           (items as any[]).forEach((item: any) => {
             const price = new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0 }).format(item.price);
             reply += `• ${item.name} - ${price}`;
@@ -639,7 +644,7 @@ export class BotEngineService {
           const availableServices = config?.services || {};
           const selectedService = availableServices[context.collectedData.service];
           if (selectedService?.requiresProducts) {
-            reply += `\nPor favor, dime qué productos quieres de nuestro menú. Por ejemplo: "quiero una pizza margherita y una coca cola" 😊`;
+            reply += `Por favor, dime qué productos quieres. Por ejemplo: "quiero 2 hamburguesas y 1 pizza" 😊`;
           } else {
             reply += `¿Te gustaría hacer una reserva? 😊`;
           }

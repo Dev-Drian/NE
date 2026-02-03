@@ -39,6 +39,7 @@ export class ServiceConfigResolverService {
     const availableServices: Record<string, any> = {};
     for (const service of dbServices) {
       const serviceConfig = (service.config as any) || {};
+      this.logger.debug(`📦 Service ${service.key} config JSON: ${JSON.stringify(serviceConfig)}`);
       availableServices[service.key] = {
         name: service.name,
         description: service.description,
@@ -61,6 +62,7 @@ export class ServiceConfigResolverService {
     
     if (serviceKey && rawServiceConfig) {
       this.logger.debug(`🎯 Servicio seleccionado: ${serviceKey}, requiredFields: ${JSON.stringify(rawServiceConfig.requiredFields)}`);
+      this.logger.debug(`💳 Config pago: requiresPayment=${rawServiceConfig?.requiresPayment}, depositPercentage=${rawServiceConfig?.depositPercentage}, basePrice=${rawServiceConfig?.basePrice}`);
     }
 
     // Defaults desde templates (compatibilidad). El override real debería venir de config.services[serviceKey]
@@ -68,6 +70,12 @@ export class ServiceConfigResolverService {
 
     const requiresProducts = rawServiceConfig?.requiresProducts === true;
     const requiresPayment = (rawServiceConfig?.requiresPayment === true) || company.requiresPayment === true;
+    
+    // requiresResources: valida disponibilidad de mesas, citas, etc.
+    // Puede venir de requiresResources, requiresTable, o isAppointmentBased
+    const requiresResources = rawServiceConfig?.requiresResources === true || 
+                              rawServiceConfig?.requiresTable === true || 
+                              rawServiceConfig?.isAppointmentBased === true;
 
     // Regla genérica:
     // - si el servicio requiere productos => no pedir guests
@@ -78,7 +86,7 @@ export class ServiceConfigResolverService {
         ? rawServiceConfig.requiresGuests
         : (settings.requireGuests === true && !requiresProducts);
 
-    const requiresTable = rawServiceConfig?.requiresTable === true;
+    const requiresTable = rawServiceConfig?.requiresTable === true || requiresResources;
     const requiresAddress = rawServiceConfig?.requiresAddress === true || rawServiceConfig?.requiresLocation === true;
 
     // Determinar el sustantivo correcto según la configuración del servicio
@@ -88,7 +96,7 @@ export class ServiceConfigResolverService {
       reservationNoun = rawServiceConfig.reservationNoun;
     } else if (requiresAddress || rawServiceConfig?.isDelivery) {
       reservationNoun = 'pedido';
-    } else if (rawServiceConfig?.isAppointmentBased || rawServiceConfig?.requiresAppointmentCheck) {
+    } else if (rawServiceConfig?.isAppointmentBased || rawServiceConfig?.requiresAppointmentCheck || requiresResources) {
       reservationNoun = 'cita';
     }
 
@@ -155,10 +163,15 @@ export class ServiceConfigResolverService {
         requiresTable,
         requiresPayment,
         requiresAddress,
+        requiresResources, // Valida disponibilidad de mesas, citas, etc.
         requiredFields: rawServiceConfig?.requiredFields, // Campos específicos del servicio
         optionalFields: rawServiceConfig?.optionalFields, // Campos opcionales del servicio
         name: serviceName,
         enabled: rawServiceConfig?.enabled !== false,
+        // Información de pago (se usa automáticamente, NO se pregunta al usuario)
+        basePrice: rawServiceConfig?.basePrice || null,
+        depositPercentage: rawServiceConfig?.depositPercentage || rawServiceConfig?.requiresDeposit ? (rawServiceConfig?.depositPercentage || 100) : null,
+        deliveryFee: rawServiceConfig?.deliveryFee || 0,
       },
       missingFieldLabels,
       reservationNoun,

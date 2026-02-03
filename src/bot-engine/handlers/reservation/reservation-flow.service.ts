@@ -141,6 +141,28 @@ export class ReservationFlowService {
     
     const hasMultipleServices = serviceKeys.length > 1;
 
+    // ===== DETECTAR "CONTINUAR" DESDE STAGE COLLECTING_OPTIONAL =====
+    // Si el usuario está en collecting_optional y dice "continuar/listo", saltar a confirmación
+    // Esto DEBE ocurrir ANTES de procesar datos extraídos para no perder los datos ya recopilados
+    const skipOptionalKeywords = /\b(no|skip|omitir|saltar|ninguno|nada|sin|continuar|confirmar|listo|ok|vale|está bien|esta bien)\b/i;
+    const userWantsToSkipOptional = skipOptionalKeywords.test(dto.message);
+    
+    if (context.stage === 'collecting_optional' && userWantsToSkipOptional) {
+      this.logger.log(`⏭️ Usuario quiere saltar campos opcionales, continuando con datos existentes`);
+      this.logger.log(`📦 Datos recopilados: ${JSON.stringify(context.collectedData)}`);
+      
+      // Marcar que el usuario declinó opcionales y continuar con los datos existentes
+      // Forzar el stage a 'ready_to_confirm' para saltar la verificación de campos opcionales
+      context.metadata = {
+        ...context.metadata,
+        userDeclinedOptionalFields: true,
+      };
+      context.stage = 'ready_to_confirm';
+      
+      // Usar los datos ya recopilados (no procesar datos nuevos del mensaje "continuar")
+      detection.extractedData = {};
+    }
+
     const previousData = { ...context.collectedData };
 
     // Normalizar campos de inglés a español
@@ -608,6 +630,7 @@ export class ReservationFlowService {
           resolution.missingFieldLabels[missing[0]] || missing[0],
           companyType,
           svcConfig,
+          dto.companyId, // Pasar companyId para mostrar catálogo de productos
         );
       } else if (!hasAskedAllFields) {
         // Primera vez con múltiples campos faltantes → preguntar todos de una vez
@@ -618,6 +641,7 @@ export class ReservationFlowService {
           newData,
           companyType,
           svcConfig,
+          dto.companyId, // Pasar companyId para mostrar catálogo de productos
         );
       } else {
         // Ya preguntamos todos antes → preguntar el primero que falta (uno a uno)
@@ -629,6 +653,7 @@ export class ReservationFlowService {
           resolution.missingFieldLabels[missing[0]] || missing[0],
           companyType,
           svcConfig,
+          dto.companyId, // Pasar companyId para mostrar catálogo de productos
         );
       }
 
@@ -657,26 +682,19 @@ export class ReservationFlowService {
       collected.guests = settings.defaultGuests || 1;
     }
 
-    // ===== VERIFICAR CAMPOS OPCIONALES =====
-    // Si todos los requeridos están completos, ofrecer preguntar campos opcionales
+    // ===== VERIFICAR CAMPOS OPCIONALES (DESHABILITADO TEMPORALMENTE) =====
+    // TODO: Reactivar cuando se implemente correctamente
+    /*
     const optionalFields = resolution.validatorConfig.optionalFields || [];
     const pendingOptional = this.serviceValidator.getOptionalFieldsPending(collected, resolution.validatorConfig);
     const hasAskedOptional = context.metadata?.hasAskedOptionalFields || false;
     const userDeclinedOptional = context.metadata?.userDeclinedOptionalFields || false;
+    const isReadyToConfirm = context.stage === 'ready_to_confirm';
     
-    // Solo preguntar opcionales si:
-    // 1. Hay campos opcionales pendientes
-    // 2. No hemos preguntado aún
-    // 3. El usuario no ha declinado
-    // 4. El mensaje actual no parece un "no" o similar
-    const skipOptionalKeywords = /\b(no|skip|omitir|saltar|ninguno|nada|sin|continuar|confirmar|listo)\b/i;
-    const userWantsToSkip = skipOptionalKeywords.test(dto.message);
-    
-    if (pendingOptional.length > 0 && !hasAskedOptional && !userDeclinedOptional && !userWantsToSkip) {
+    if (pendingOptional.length > 0 && !hasAskedOptional && !userDeclinedOptional && !isReadyToConfirm) {
       const optionalLabels = pendingOptional.map((f) => resolution.missingFieldLabels[f] || f);
       const svcConfig = collected.service ? availableServices[collected.service] : null;
       
-      // Construir pregunta amigable para campos opcionales
       let reply = `✅ ¡Tengo toda la info necesaria!\n\n`;
       reply += `📋 Opcionalmente, puedes indicarme:\n`;
       optionalLabels.forEach((label, i) => {
@@ -697,84 +715,81 @@ export class ReservationFlowService {
             pendingOptionalFields: pendingOptional,
           },
         },
-        missingFields: [], // No son requeridos
+        missingFields: [],
       };
     }
+    */
+
+    // Solo validar disponibilidad si el servicio requiere fecha y hora
+    const requiresDateTimeValidation = collected.date && collected.time;
     
-    // Si el usuario quiso saltar opcionales, marcar como declinado
-    if (userWantsToSkip && context.stage === 'collecting_optional') {
-      context.metadata = {
-        ...context.metadata,
-        userDeclinedOptionalFields: true,
-      };
-    }
+    if (requiresDateTimeValidation) {
+      // Validar disponibilidad
+      this.logger.log('\n========== VALIDACIÓN DE DISPONIBILIDAD ==========');
+      this.logger.log(`📅 date: ${collected.date}`);
+      this.logger.log(`🕐 time: ${collected.time}`);
+      this.logger.log(`🛠️ service: ${collected.service}`);
+      this.logger.log(`👤 userId: ${dto.userId}`);
+      
+      const available = await this.availability.check(dto.companyId, {
+        date: collected.date!,
+        time: collected.time!,
+        guests: collected.guests,
+        userId: dto.userId,
+        service: collected.service,
+      });
+      
+      this.logger.log(`✅ Resultado disponibilidad: ${JSON.stringify(available)}`);
+      this.logger.log('===================================================\n');
 
-    // Validar disponibilidad
-    this.logger.log('\n========== VALIDACIÓN DE DISPONIBILIDAD ==========');
-    this.logger.log(`📅 date: ${collected.date}`);
-    this.logger.log(`🕐 time: ${collected.time}`);
-    this.logger.log(`🛠️ service: ${collected.service}`);
-    this.logger.log(`👤 userId: ${dto.userId}`);
-    
-    const available = await this.availability.check(dto.companyId, {
-      date: collected.date!,
-      time: collected.time!,
-      guests: collected.guests,
-      userId: dto.userId,
-      service: collected.service,
-    });
-    
-    this.logger.log(`✅ Resultado disponibilidad: ${JSON.stringify(available)}`);
-    this.logger.log('===================================================\n');
+      if (!available.isAvailable) {
+        if (available.reason === 'time_out_of_range') {
+          const invalidTime = collected.time;
+          delete collected.time;
 
-    if (!available.isAvailable) {
-      if (available.reason === 'time_out_of_range') {
-        const invalidTime = collected.time;
-        delete collected.time;
+          let reply = `❌ Lo siento, la hora ${invalidTime || 'solicitada'} está fuera de nuestro horario de atención.\n\n`;
+          reply += `🕐 ${available.message || 'Horario no disponible'}\n\n`;
 
-        let reply = `❌ Lo siento, la hora ${invalidTime || 'solicitada'} está fuera de nuestro horario de atención.\n\n`;
-        reply += `🕐 ${available.message || 'Horario no disponible'}\n\n`;
+          if (available.alternatives?.length) {
+            reply += `¿Te sirve alguna de estas horas?\n`;
+            available.alternatives.slice(0, 3).forEach((alt, idx) => {
+              reply += `${idx + 1}. ${alt}\n`;
+            });
+            reply += `\nO dime otra hora dentro del horario. 😊`;
+          } else {
+            reply += `Por favor, indícame otra hora dentro del horario. 😊`;
+          }
 
-        if (available.alternatives?.length) {
-          reply += `¿Te sirve alguna de estas horas?\n`;
-          available.alternatives.slice(0, 3).forEach((alt, idx) => {
-            reply += `${idx + 1}. ${alt}\n`;
-          });
-          reply += `\nO dime otra hora dentro del horario. 😊`;
-        } else {
-          reply += `Por favor, indícame otra hora dentro del horario. 😊`;
+          return {
+            reply,
+            newState: {
+              ...context,
+              collectedData: collected,
+              stage: 'collecting',
+              lastIntention: 'reservar',
+            },
+            missingFields: [resolution.missingFieldLabels['time'] || 'hora'],
+          };
         }
 
-        return {
-          reply,
-          newState: {
-            ...context,
-            collectedData: collected,
-            stage: 'collecting',
-            lastIntention: 'reservar',
-          },
-          missingFields: [resolution.missingFieldLabels['time'] || 'hora'],
-        };
-      }
+        // Si es una cita ocupada, mostrar alternativas y pedir nueva hora
+        if (available.reason === 'appointment_taken') {
+          const occupiedTime = collected.time;
+          delete collected.time; // Limpiar la hora para que elija otra
 
-      // Si es una cita ocupada, mostrar alternativas y pedir nueva hora
-      if (available.reason === 'appointment_taken') {
-        const occupiedTime = collected.time;
-        delete collected.time; // Limpiar la hora para que elija otra
+          let reply = available.message || `❌ Ya hay una cita programada para las ${occupiedTime}.`;
+          
+          if (available.alternatives?.length) {
+            reply += `\n\n🕐 Horarios disponibles para ese día:\n`;
+            available.alternatives.slice(0, 5).forEach((alt, idx) => {
+              reply += `${idx + 1}. ${alt}\n`;
+            });
+            reply += `\n¿Te sirve alguno de estos horarios?`;
+          }
 
-        let reply = available.message || `❌ Ya hay una cita programada para las ${occupiedTime}.`;
-        
-        if (available.alternatives?.length) {
-          reply += `\n\n🕐 Horarios disponibles para ese día:\n`;
-          available.alternatives.slice(0, 5).forEach((alt, idx) => {
-            reply += `${idx + 1}. ${alt}\n`;
-          });
-          reply += `\n¿Te sirve alguno de estos horarios?`;
-        }
-
-        return {
-          reply,
-          newState: {
+          return {
+            reply,
+            newState: {
             ...context,
             collectedData: collected,
             stage: 'collecting',
@@ -801,61 +816,62 @@ export class ReservationFlowService {
           lastIntention: 'reservar',
         },
       };
-    }
-
-    // ===== VALIDACIÓN DE CITAS/APPOINTMENTS OCUPADAS =====
-    // Para servicios que requieren verificación de disponibilidad de cita (config.requiresAppointmentCheck)
-    const selectedServiceConfig = collected.service ? availableServices[collected.service] : null;
-    const requiresAppointmentCheck = selectedServiceConfig?.requiresAppointmentCheck || 
-                                      selectedServiceConfig?.isAppointmentBased ||
-                                      (selectedServiceConfig?.name || '').toLowerCase().includes('cita');
-    
-    if (requiresAppointmentCheck) {
-      this.logger.log(`🔍 Validando disponibilidad de cita/appointment: ${collected.date} ${collected.time}`);
-      const productId = collected.products?.[0]?.id;
-      const appointmentCheck = await this.availability.checkAppointmentAvailability(
-        dto.companyId,
-        collected.date!,
-        collected.time!,
-        collected.service,
-        productId,
-      );
-
-      this.logger.log(`📋 Resultado validación cita: ${JSON.stringify(appointmentCheck)}`);
-
-      if (!appointmentCheck.isAvailable) {
-        let reply = appointmentCheck.message || 'Ese horario ya está ocupado.';
-        
-        if (appointmentCheck.alternatives && appointmentCheck.alternatives.length > 0) {
-          reply += `\n\n🕐 Horarios disponibles para ese día:\n`;
-          appointmentCheck.alternatives.forEach((slot, idx) => {
-            reply += `${idx + 1}. ${slot}\n`;
-          });
-          reply += `\n¿Te sirve alguno de estos horarios?`;
-        }
-
-        // Limpiar la hora para que pueda elegir otra
-        delete collected.time;
-
-        return {
-          reply,
-          newState: {
-            ...context,
-            collectedData: collected,
-            stage: 'collecting',
-            lastIntention: 'reservar',
-          },
-          missingFields: [resolution.missingFieldLabels['time'] || 'hora'],
-        };
       }
-    }
+
+      // ===== VALIDACIÓN DE CITAS/APPOINTMENTS OCUPADAS =====
+      // Para servicios que requieren verificación de disponibilidad de cita (config.requiresAppointmentCheck)
+      const selectedServiceConfig = collected.service ? availableServices[collected.service] : null;
+      const requiresAppointmentCheck = selectedServiceConfig?.requiresAppointmentCheck || 
+                                        selectedServiceConfig?.isAppointmentBased ||
+                                        (selectedServiceConfig?.name || '').toLowerCase().includes('cita');
+      
+      if (requiresAppointmentCheck) {
+        this.logger.log(`🔍 Validando disponibilidad de cita/appointment: ${collected.date} ${collected.time}`);
+        const productId = collected.products?.[0]?.id;
+        const appointmentCheck = await this.availability.checkAppointmentAvailability(
+          dto.companyId,
+          collected.date!,
+          collected.time!,
+          collected.service,
+          productId,
+        );
+
+        this.logger.log(`📋 Resultado validación cita: ${JSON.stringify(appointmentCheck)}`);
+
+        if (!appointmentCheck.isAvailable) {
+          let reply = appointmentCheck.message || 'Ese horario ya está ocupado.';
+          
+          if (appointmentCheck.alternatives && appointmentCheck.alternatives.length > 0) {
+            reply += `\n\n🕐 Horarios disponibles para ese día:\n`;
+            appointmentCheck.alternatives.forEach((slot, idx) => {
+              reply += `${idx + 1}. ${slot}\n`;
+            });
+            reply += `\n¿Te sirve alguno de estos horarios?`;
+          }
+
+          // Limpiar la hora para que pueda elegir otra
+          delete collected.time;
+
+          return {
+            reply,
+            newState: {
+              ...context,
+              collectedData: collected,
+              stage: 'collecting',
+              lastIntention: 'reservar',
+            },
+            missingFields: [resolution.missingFieldLabels['time'] || 'hora'],
+          };
+        }
+      }
+    } // Fin de if (requiresDateTimeValidation)
 
     // Validar y asignar recursos (mesas, productos, etc.)
     const resourceValidation = await this.resourceValidator.validateAndAssignResources(
       dto.companyId,
       collected.service!,
-      collected.date!,
-      collected.time!,
+      collected.date,
+      collected.time,
       {
         guests: collected.guests,
         products: collected.products,
@@ -927,18 +943,29 @@ export class ReservationFlowService {
     const selectedService = collected.service ? availableServices[collected.service] : null;
 
     // ===== FLUJO DE PAGO (genérico) =====
+    // El pago se calcula automáticamente basado en la config del servicio - NO se pregunta al usuario
     if (requiresPayment && context.stage !== 'awaiting_payment') {
       let paymentAmount = 0;
       let paymentDescription = '';
+      let subtotal = 0;
+      let deliveryFee = 0;
 
-      if (requiresProducts && collected.products) {
-        const products = config?.products || [];
+      // 1. Si tiene productos, calcular total de productos
+      if (requiresProducts && collected.products && collected.products.length > 0) {
+        // Usar productos de la BD (catalogProducts ya está definido arriba)
         const productsList = Array.isArray(collected.products) ? collected.products : [];
-        let subtotal = 0;
 
         for (const item of productsList) {
           if (typeof item === 'object' && (item as any).id) {
-            const product = products.find((p: any) => p.id === (item as any).id);
+            // Buscar producto por ID o por nombre (normalizado)
+            const itemId = (item as any).id;
+            const normalizedItemId = String(itemId).toLowerCase().trim();
+            const product = catalogProducts.find((p: any) => 
+              p.id === itemId || 
+              p.name?.toLowerCase().trim() === normalizedItemId ||
+              p.name?.toLowerCase().includes(normalizedItemId) ||
+              normalizedItemId.includes(p.name?.toLowerCase())
+            );
             if (product) {
               const quantity = (item as any).quantity || 1;
               subtotal += (product.price || 0) * quantity;
@@ -946,14 +973,22 @@ export class ReservationFlowService {
           }
         }
 
-        const deliveryFee = selectedService?.deliveryFee || 0;
+        deliveryFee = selectedService?.deliveryFee || 0;
         paymentAmount = subtotal + deliveryFee;
 
         const totalItems = productsList.reduce((sum: number, item: any) => sum + (item.quantity || 1), 0);
         paymentDescription = `${resolution.reservationNoun === 'pedido' ? 'Pedido' : 'Reserva'} - ${totalItems} producto(s)`;
+      } 
+      // 2. Si NO tiene productos pero el servicio tiene precio base, usar ese precio
+      else if (selectedService?.basePrice || resolution.validatorConfig.basePrice) {
+        const basePrice = selectedService?.basePrice || resolution.validatorConfig.basePrice || 0;
+        paymentAmount = Number(basePrice);
+        paymentDescription = `${resolution.reservationNoun || 'Reserva'} - ${selectedService?.name || collected.service || 'Servicio'}`;
       }
 
-      const paymentPercentage = (company as any)?.paymentPercentage || 100;
+      // Obtener porcentaje de pago (puede ser depósito parcial o pago completo)
+      const depositPercentage = selectedService?.depositPercentage || resolution.validatorConfig.depositPercentage;
+      const paymentPercentage = depositPercentage || (company as any)?.paymentPercentage || 100;
       const finalAmount = Math.round(paymentAmount * (paymentPercentage / 100));
 
       if (finalAmount > 0) {
@@ -1033,33 +1068,45 @@ export class ReservationFlowService {
             reply += `🏷️ Servicio: ${availableServices[collected.service].name}\n`;
           }
           
-          // Mostrar productos si los hay
-          if (requiresProducts && collected.products) {
-            const products = config?.products || [];
+          // Mostrar productos si los hay (usando catalogProducts de la BD)
+          if (requiresProducts && collected.products && collected.products.length > 0) {
             const productsList = Array.isArray(collected.products) ? collected.products : [];
             reply += `\n🛒 Productos:\n`;
             
-            let subtotal = 0;
             for (const item of productsList) {
               if (typeof item === 'object' && (item as any).id) {
-                const product = products.find((p: any) => p.id === (item as any).id);
+                const itemId = (item as any).id;
+                const normalizedItemId = String(itemId).toLowerCase().trim();
+                const product = catalogProducts.find((p: any) => 
+                  p.id === itemId || 
+                  p.name?.toLowerCase().trim() === normalizedItemId ||
+                  p.name?.toLowerCase().includes(normalizedItemId) ||
+                  normalizedItemId.includes(p.name?.toLowerCase())
+                );
                 if (product) {
                   const quantity = (item as any).quantity || 1;
                   const itemTotal = (product.price || 0) * quantity;
-                  subtotal += itemTotal;
                   reply += `   • ${quantity}x ${product.name} - $${itemTotal.toLocaleString('es-CO')}\n`;
                 }
               }
             }
             
-            const deliveryFee = selectedService?.deliveryFee || 0;
             if (deliveryFee > 0) {
               reply += `   • Envío - $${deliveryFee.toLocaleString('es-CO')}\n`;
             }
             reply += `\n💰 Total: $${paymentAmount.toLocaleString('es-CO')}\n`;
+          } 
+          // Si no hay productos pero hay precio base, mostrar el precio del servicio
+          else if (paymentAmount > 0) {
+            reply += `\n💰 Precio del servicio: $${paymentAmount.toLocaleString('es-CO')}\n`;
           }
           
-          reply += `\n💳 Anticipo requerido: $${finalAmount.toLocaleString('es-CO')} (${paymentPercentage}% del total)`;
+          // Mostrar el monto a pagar (puede ser anticipo parcial o total)
+          if (paymentPercentage < 100) {
+            reply += `\n💳 Anticipo requerido: $${finalAmount.toLocaleString('es-CO')} (${paymentPercentage}% del total)`;
+          } else {
+            reply += `\n💳 Monto a pagar: $${finalAmount.toLocaleString('es-CO')}`;
+          }
           reply += `\n\n⚠️ Para confirmar tu ${resolution.reservationNoun}, debes realizar el pago.`;
           if (paymentUrl) reply += `\n\n🔗 Realiza el pago aquí: ${paymentUrl}`;
           reply += `\n\nUna vez pagues, escríbeme "ya pagué". 😊`;
@@ -1080,6 +1127,17 @@ export class ReservationFlowService {
           };
         } catch (err) {
           this.logger.error('Error generando link de pago:', err);
+          // NO continuar con la reserva si hay error de pago - informar al usuario
+          return {
+            reply: `❌ Lo siento, hubo un problema al procesar el pago. Por favor intenta de nuevo en unos minutos o contacta con nosotros directamente.`,
+            newState: {
+              ...context,
+              collectedData: collected,
+              stage: 'collecting',
+              lastIntention: 'reservar',
+            },
+            missingFields: [],
+          };
         }
       }
     }
@@ -1214,6 +1272,7 @@ export class ReservationFlowService {
     fieldLabel: string,
     companyType: string,
     serviceConfig?: any,
+    companyId?: string,
   ): Promise<string> {
     const terminology = await this.messagesTemplates.getTerminology(companyType);
     // Determinar tipo de reserva dinámicamente desde config del servicio
@@ -1269,7 +1328,37 @@ export class ReservationFlowService {
         question = `¿Cuál es tu nombre?`;
         break;
       case 'products':
-        question = `¿Qué productos deseas pedir?`;
+        // Mostrar catálogo de productos disponibles
+        if (companyId) {
+          const catalogProducts = await this.productsService.findByCompany(companyId);
+          if (catalogProducts && catalogProducts.length > 0) {
+            // Agrupar por categoría si existe
+            const byCategory: Record<string, any[]> = {};
+            for (const p of catalogProducts) {
+              const cat = p.category || 'Otros';
+              if (!byCategory[cat]) byCategory[cat] = [];
+              byCategory[cat].push(p);
+            }
+            
+            let productList = '🛒 *Nuestros productos:*\n\n';
+            for (const [category, products] of Object.entries(byCategory)) {
+              if (Object.keys(byCategory).length > 1) {
+                productList += `*${category}:*\n`;
+              }
+              for (const p of products) {
+                const price = p.price ? ` - $${p.price.toLocaleString('es-CO')}` : '';
+                productList += `• ${p.name}${price}\n`;
+              }
+              productList += '\n';
+            }
+            productList += '¿Qué te gustaría pedir? (puedes indicar cantidades, ej: "2 hamburguesas y 1 pizza")';
+            question = productList;
+          } else {
+            question = `¿Qué productos deseas pedir?`;
+          }
+        } else {
+          question = `¿Qué productos deseas pedir?`;
+        }
         break;
       case 'address':
         question = `¿Cuál es la dirección de entrega?`;
@@ -1296,6 +1385,7 @@ export class ReservationFlowService {
     newData: any,
     companyType: string,
     serviceConfig?: any,
+    companyId?: string,
   ): Promise<string> {
     const terminology = await this.messagesTemplates.getTerminology(companyType);
     // Determinar tipo de reserva dinámicamente desde config del servicio
@@ -1340,6 +1430,41 @@ export class ReservationFlowService {
       parts.push(`¡Perfecto! Tengo anotado:\n${receivedParts.join('\n')}`);
     }
 
+    // Verificar si productos es uno de los campos faltantes y mostrar catálogo
+    const needsProducts = missingFieldsSpanish.some(field => {
+      const f = field.toLowerCase();
+      return f.includes('producto') || f === 'products';
+    });
+
+    let productCatalog = '';
+    if (needsProducts && companyId) {
+      try {
+        const products = await this.productsService.findByCompany(companyId);
+        if (products && products.length > 0) {
+          // Agrupar por categoría
+          const byCategory: Record<string, typeof products> = {};
+          for (const p of products) {
+            const cat = p.category || 'Otros';
+            if (!byCategory[cat]) byCategory[cat] = [];
+            byCategory[cat].push(p);
+          }
+
+          const lines: string[] = ['📋 *Nuestro menú:*\n'];
+          for (const [cat, items] of Object.entries(byCategory)) {
+            lines.push(`*${cat}*`);
+            for (const item of items) {
+              const price = item.price ? ` - $${item.price}` : '';
+              lines.push(`  • ${item.name}${price}`);
+            }
+            lines.push('');
+          }
+          productCatalog = lines.join('\n');
+        }
+      } catch (e) {
+        // Ignorar error de productos
+      }
+    }
+
     // Preguntar todos los campos faltantes
     const questions = missingFieldsSpanish.map((field, index) => {
       // Mapear campos en español a preguntas específicas
@@ -1365,9 +1490,14 @@ export class ReservationFlowService {
     });
 
     parts.push(`Para confirmar tu ${reservationType}, necesito:\n${questions.join('\n')}`);
+
+    // Agregar catálogo de productos si corresponde
+    if (productCatalog) {
+      parts.push(productCatalog);
+    }
+
     parts.push(`\n💡 Puedes darme todos los datos de una vez o uno por uno.`);
 
     return parts.join('\n\n');
   }
 }
-

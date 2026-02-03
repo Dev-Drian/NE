@@ -9,10 +9,15 @@ export interface ServiceConfig {
   requiresPayment?: boolean;
   requiresAddress?: boolean; // Para domicilio - requiere dirección/ubicación
   requiresLocation?: boolean; // Alias de requiresAddress
+  requiresResources?: boolean; // Valida disponibilidad de mesas, citas, horarios, etc.
   requiredFields?: string[]; // Campos específicos requeridos por este servicio
   optionalFields?: string[]; // Campos opcionales que el bot puede preguntar
   name?: string;
   enabled?: boolean;
+  // Información de pago (se calcula automáticamente, NO se pregunta)
+  basePrice?: number | null;
+  depositPercentage?: number | null; // Porcentaje de anticipo requerido
+  deliveryFee?: number; // Tarifa de envío para domicilios
 }
 
 export interface ValidationResult {
