@@ -10,6 +10,7 @@ import { PaymentsService } from '../../payments/payments.service';
 import { ReservationsService } from '../../reservations/reservations.service';
 import { ContextBuilderService } from '../context/context-builder.service';
 import { PromptBuilderService } from './prompt-builder.service';
+import { ProductsService } from '../../products/products.service';
 import OpenAI from 'openai';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
@@ -31,6 +32,7 @@ export class Layer3OpenAIService {
     private layer2: Layer2SimilarityService,
     private contextBuilder: ContextBuilderService,
     private promptBuilder: PromptBuilderService,
+    private productsService: ProductsService,
     @Inject(forwardRef(() => PaymentsService))
     private paymentsService: PaymentsService,
     @Inject(forwardRef(() => ReservationsService))
